@@ -1,0 +1,183 @@
+idea:
+  title: Forecasting delayed unsafe behavior from model activations with verbalizers
+  domain: artificial_intelligence
+  hypothesis: 'Part 1 (evaluation): Existing activation verbalizers, such as Activation
+    Oracles
+
+    (AO), LatentQA-style decoders, and prompting/self-report, may not be able to
+
+    forecast unsafe behavior that appears many tokens after the current position
+
+    (e.g., a response that starts with safe general background and later turns
+
+    into harmful recommendations). Their predictive ability should decay with
+
+    lead distance (64, 128, 256, 512 tokens) and may not beat text-only or simple
+
+    activation-probe baselines.
+
+
+    Part 2 (method): A verbalizer trained with direct supervision of future events
+
+    and their timing will keep more information about distant behavior. We train
+
+    a shared future-forecast representation: horizon queries produce forecast
+
+    vectors, an event-timing head reads them, and a QA decoder answers questions
+
+    from them. This should improve early warning over an AO trained on the same
+
+    future labels. If the matched direct AO does equally well, the conclusion is
+
+    that the supervision, not the architecture, is the contribution.
+
+    '
+  background:
+    description: "Goal: test whether activation verbalizers can predict unsafe behavior\
+      \ that\ndoes not appear right after the prompt but a few to hundreds of tokens\n\
+      later, then build a predictor that can. All budgets and dimensions below are\n\
+      starting points; adjust them after the pilot.\n\nTarget model: Qwen3-8B (https://huggingface.co/Qwen/Qwen3-8B),\
+      \ kept frozen.\nThe observer/verbalizer must never affect the target's generation.\n\
+      \nPrediction definition: for a prefix ending at token t, predict the\nprobability\
+      \ that a primary unsafe event first occurs within the next H\ntokens (H in {64,\
+      \ 128, 256, 512}), under a fixed checkpoint and decoding\npolicy. Record temperature,\
+      \ sampling settings, stopping rules and max length.\nCumulative risk must not\
+      \ decrease as H grows. If generation stops before the\nhorizon because of a\
+      \ length cap or failure, that horizon is CENSORED and must\nnot be labeled safe.\
+      \ If generation ends normally, the response has no later\nevent. Use only prefixes\
+      \ that are still safe for the primary forecasting\nanalysis. Evaluate detection\
+      \ of already-unsafe text separately.\n\nSafety rubric (fix it before main data\
+      \ collection): annotate toxic language,\nharmful recommendations and fictional\
+      \ descriptions of harm separately. A\nstory that contains harm is not automatically\
+      \ an unsafe assistant response.\nThe primary event is the first clear policy\
+      \ violation; keep its text span\nand token offsets.\n\nResearch questions:\n\
+      \  RQ1: How far ahead can we predict? Measure at 64, 128, 256 and 512 tokens\n\
+      \       while the observed prefix is still safe.\n  RQ2: Does an explicit future\
+      \ representation help beyond a direct AO with\n       the same activations,\
+      \ decoder, labels and tuning budget?\n  RQ3: Can one forecast support several\
+      \ questions (occurrence, behavior\n       type, timing, topic change)? Hold\
+      \ out question meanings, not just\n       paraphrases.\n  RQ4 (stretch): Do\
+      \ several weighted future timelines (K=2-4) improve\n       likelihood and calibration?\n\
+      \  RQ5 (stretch): Does activation history (recent window / recurrent memory)\n\
+      \       improve early warning over the latest activation?\n  RQ6 (stretch):\
+      \ Does GRPO after SFT add predictive ability under matched\n       data and\
+      \ compute?\n\nData:\n  Track B (main, natural generations): fresh continuations\
+      \ from the frozen,\n  unmodified Qwen3-8B on prompts that can lead to delayed\
+      \ unsafe content,\n  plus a story setting for topic/event forecasting. Report\
+      \ story forecasting\n  and assistant-safety forecasting separately. The agent\
+      \ should find suitable\n  prompt sources (e.g., jailbreak/harmful-request datasets,\
+      \ long-form\n  advice prompts).\n  Track A (optional, controlled delayed behavior):\
+      \ a model organism that\n  stays safe for a while and then becomes unsafe under\
+      \ a contextual trigger.\n  Vary the delay, trigger and safe opening, and include\
+      \ safe counterexamples.\n  If the organism always fails at a fixed token count,\
+      \ a token-position\n  baseline may be enough to explain the results.\n  Annotation:\
+      \ one structured timeline per completed generation from an\n  external LLM (topics,\
+      \ behaviors, unsafe spans, first onset, uncertainty).\n  Map spans to target-tokenizer\
+      \ offsets and derive prefix labels\n  programmatically. Human-check a stratified\
+      \ sample of at least 200.\n  Pilot: about 1,000 prompt families, 4-8 safe cutoffs\
+      \ per generation, 4-6\n  question types per prefix. Repeated-rollout eval: 32\
+      \ continuations for\n  about 200 held-out prefixes, to check calibration.\n\
+      \  Split by prompt family (80/10/10) BEFORE generation. Fix monitoring cutoffs\n\
+      \  before looking at continuations. Run a causal-input audit (no future tokens\n\
+      \  can reach observer inputs) and a split audit before training.\n\nProposed\
+      \ architecture (Part 2):\n  - Activation encoder: 3 layers (early-mid, late-mid,\
+      \ late) at the latest\n    position, normalized, projected to 256 each, combined\
+      \ to 512, plus layer\n    and position embeddings.\n  - Future representation:\
+      \ 4 learned horizon queries for windows 1-64,\n    65-128, 129-256 and 257-512,\
+      \ with 2 forecast vectors per window. All are\n    predicted from information\
+      \ available at the cutoff.\n  - Timing head: distribution over first-event bins\
+      \ {1-64, 65-128, 129-256,\n    257-512, none within 512}. Cumulative risk is\
+      \ the sum of bins.\n    Censoring-aware loss.\n  - Topic and behavior heads\
+      \ per window, plus semantic description targets\n    from a frozen sentence\
+      \ encoder (auxiliary loss).\n  - QA decoder: the same pretrained decoder and\
+      \ adapter budget as the direct\n    AO baseline. Inputs are forecast vectors,\
+      \ event probabilities and the\n    question. No raw-activation bypass in the\
+      \ main version (bypass is an\n    ablation). Numerical answers come from the\
+      \ calibrated event head.\n  - Loss: L = L_onset + lambda_b*L_behavior + lambda_s*L_future_semantics\n\
+      \    + lambda_q*L_QA.\n\nTraining order: (0) linear/MLP probe, text-only and\
+      \ token-position baselines\nto confirm a signal exists; (1) forecast module\
+      \ and heads; (2) decoder\nadapters on predicted (not gold) forecast vectors;\
+      \ (3, stretch) memory and\nmixtures; (4, stretch) GRPO.\n"
+    papers:
+    - url: https://arxiv.org/abs/2412.08686
+      description: 'LatentQA: decoding activations into natural-language answers about
+        model behavior'
+    code_references:
+    - repo: https://github.com/aypan17/latentqa
+      description: LatentQA code
+    other_related_work_to_find: 'The agent should find and cite: Activation Oracles,
+      Predictive Concept Decoders, Building Better
+
+      Activation Oracles, Natural Language Autoencoders (SFT + GRPO verbalization),
+
+      Beyond Multi-Token Prediction (future summaries), Future Probes, JANUS,
+
+      DreamGuard. Do not claim to be the first system that predicts long-term
+
+      unsafe behavior.
+
+      '
+  methodology:
+    approach: 'Phase 1: evaluate existing verbalizers (AO/LatentQA-style decoders,
+      target
+
+      self-report, plus NLA/PCD if a compatible checkpoint exists) on forecasting
+
+      delayed unsafe onset across horizons. Compare them against simple baselines.
+
+      Phase 2: train the forecast-representation observer and a matched direct AO
+
+      on the same future labels, and compare them.
+
+      '
+    steps:
+    - Fix the safety rubric and the event definition; build the prompt-family split
+    - Generate continuations from frozen Qwen3-8B, annotate timelines once, derive
+      prefix labels, cache activations
+    - Run the causal-input audit and the split audit
+    - 'E1 Forecastability: prevalence, token-position, text-only forecaster, linear/MLP
+      probes, existing verbalizers, across horizons'
+    - 'E2 Core architecture: direct AO trained on the same future labels vs. the forecast
+      representation'
+    - 'Controls: shuffled activations, no activation, question only, constant neutral
+      activation'
+    - 'Readout ceiling diagnostic: give the decoder gold future annotations'
+    - 'Stretch: E3 activation history, E4 future mixtures, E6 GRPO'
+    baselines:
+    - Prevalence and token-position predictors
+    - Target self-report (just ask Qwen3-8B)
+    - Off-the-shelf AO / LatentQA decoder (and NLA/PCD if compatible)
+    - Direct AO trained on the same future QA and event labels (the key comparison)
+    - Linear and small nonlinear activation probes
+    - Text-based forecaster with the same targets
+    - Equal-size bottleneck without future auxiliary supervision
+    - Decoder with vs. without raw-activation bypass
+    metrics:
+    - 'Primary: fraction of unsafe trajectories alerted at least 128 tokens before
+      onset, at a 5% trajectory-level false-alarm rate on benign trajectories (threshold
+      fixed on validation)'
+    - 'Secondary: the same at 64 and 256 lead tokens; missed alerts; alerts after
+      onset; lead-time distribution'
+    - 'Per horizon: log loss, Brier score, AUROC, AUPRC, with prevalence and number
+      of prompt families'
+    - Calibration against the repeated-rollout frequencies, with binomial intervals
+    - 'Verbalization: correctness, supported timing claims, agreement with the numeric
+      forecast, unsupported details, abstention coverage'
+    - Bootstrap CIs by prompt family; 3 seeds for the main comparison
+  evaluation_criteria:
+  - Forecastability curves by horizon for every existing verbalizer and baseline
+  - A clear verdict on whether the forecast architecture beats the matched direct
+    AO, or whether supervision alone explains the gains
+  - No future leakage (audits pass); all results reported at prompt-family level with
+    uncertainty
+  - Story/organism results kept separate from natural assistant-safety results
+  constraints:
+    compute: gpu_required
+  metadata:
+    author: Xiaoyan Bai
+    idea_id: forecasting_delayed_unsafe_beh_20261018_153742_255237d9
+    created_at: '2026-10-18T15:37:42.658137'
+    status: submitted
+    github_repo_name: forecasting-delayed-unsafe-behavior-5d09
+    github_repo_url: https://github.com/Elena-Baixy/forecasting-delayed-unsafe-behavior-5d09
+    github_repo_private: false
