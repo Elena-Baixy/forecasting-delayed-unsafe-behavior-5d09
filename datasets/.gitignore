@@ -1,0 +1,14 @@
+# Exclude all data files (can be large)
+*
+
+# But include documentation and small samples
+!.gitignore
+!*/
+!README.md
+!**/README.md
+!**/samples/
+!**/samples/*
+!**/download.sh
+!download_datasets.py
+!download_extra.py
+!**/download_instructions.txt

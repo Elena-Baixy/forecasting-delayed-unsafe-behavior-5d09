@@ -1,0 +1,4 @@
+Fetching 10 files:   0%|          | 0/10 [00:00<?, ?it/s]Fetching 10 files:  60%|██████    | 6/10 [00:20<00:13,  3.33s/it]Fetching 10 files:  70%|███████   | 7/10 [02:00<00:51, 17.14s/it]Fetching 10 files:  80%|████████  | 8/10 [02:27<00:36, 18.41s/it]Fetching 10 files:  90%|█████████ | 9/10 [02:29<00:16, 16.62s/it]Fetching 10 files: 100%|██████████| 10/10 [02:33<00:00, 15.36s/it]Fetching 10 files: 100%|██████████| 10/10 [02:33<00:00, 15.36s/it]
+/data/smallyan/hf_home/hub/models--NousResearch--Meta-Llama-3-8B-Instruct/snapshots/53346005fb0ef11d3b6a83b12c895cca40156b6c
+Fetching 4 files:   0%|          | 0/4 [00:00<?, ?it/s]Fetching 4 files:  25%|██▌       | 1/4 [00:00<00:00,  7.32it/s]Fetching 4 files: 100%|██████████| 4/4 [00:00<00:00,  6.59it/s]Fetching 4 files: 100%|██████████| 4/4 [00:00<00:00,  6.59it/s]
+/data/smallyan/hf_home/hub/models--aypan17--latentqa_llama-3-8b-instruct/snapshots/771bc02bc54c33fdd17fdad1db394958933b8ca4

@@ -1,0 +1,7 @@
+{
+  "error": "Paper-finder service not running at localhost:8000",
+  "fallback": true,
+  "message": "Proceeding with manual search (arXiv, Semantic Scholar, Papers with Code)"
+}
+
+Results saved to: paper_search_results/probes_on_LLM_hidden_states_predict_future_tokens_long-range_planning_lookahead_20261018_154158.jsonl

@@ -1,0 +1,7 @@
+{
+  "error": "Paper-finder service not running at localhost:8000",
+  "fallback": true,
+  "message": "Proceeding with manual search (arXiv, Semantic Scholar, Papers with Code)"
+}
+
+Results saved to: paper_search_results/forecasting_future_model_behavior_from_activations_predicting_harmful_output_bef_20261018_154158.jsonl

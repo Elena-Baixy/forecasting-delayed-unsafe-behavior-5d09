@@ -1,0 +1,13 @@
+{
+ "rel_diff_same_position": [
+  0.009523645974695683,
+  0.010249887593090534,
+  0.011807961389422417,
+  0.009723080322146416,
+  0.009207481518387794,
+  0.0,
+  0.007847889326512814,
+  0.01208761241286993
+ ],
+ "note": "observer inputs are built only from prompt+response[:t]; the longer pass shows the same-position activation is unaffected by later tokens (causal mask)"
+}

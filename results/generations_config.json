@@ -1,0 +1,12 @@
+{
+ "model": "/data/smallyan/hf_home/hub/models--Qwen--Qwen3-8B/snapshots/b968826d9c46dd6066d109eabc6255188de91218",
+ "temperature": 0.7,
+ "top_p": 0.8,
+ "top_k": 20,
+ "max_new_tokens": 768,
+ "enable_thinking": false,
+ "seed": 0,
+ "dtype": "bfloat16",
+ "stop": "eos(<|im_end|>)",
+ "n_samples": 1
+}
