@@ -1,0 +1,88 @@
+\section{Results}
+\label{sec:results}
+
+We first ask how forecastable delayed onsets are and which observers capture the signal (\secref{sec:rq1}, \secref{sec:ew}). We then test whether an explicit forecast representation beats a matched direct reader (\secref{sec:rq2}). Finally we report activation history, question generalization, the story setting, and detection (\secref{sec:extra}).
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.85\linewidth]{figures/forecast_auroc_by_horizon_all.png}
+\caption{{\bf \auroc by horizon} for the assistant setting (5-fold family CV). No informative method decays with lead distance; every method is weakest at $H{=}64$, where few positives exist and they must be separated from earlier prefixes of the same trajectory. \histprobe (purple) is best at every horizon. The off-the-shelf \ao (pink, dashed) is near chance at $H{=}64$. The \direct (gray) and \forecast (olive) readers nearly overlap and flatten at about 0.82.}
+\label{fig:auroc}
+\end{figure}
+
+\input{tables/main_auroc}
+
+\subsection{How forecastable are delayed onsets?}
+\label{sec:rq1}
+
+\para{Activations forecast delayed onsets moderately well.}
+\Tabref{tab:main} and \figref{fig:auroc} show the main results. A linear probe on all three layers reaches \auroc 0.74 at $H{=}64$ and 0.87 at $H{=}512$. \histprobe, which adds the mean of the last 16 layer-18 activations, is the best method at every horizon: 0.79, 0.82, 0.86, and 0.90. It also has the best \auprc (0.50 at 10.7\% prevalence) and the best Brier score (0.071).
+
+\para{The hardest target is imminent onset, not distant onset.}
+We expected \auroc to decay as the event moves further away. We find the opposite: every informative method has its \emph{lowest} \auroc at $H{=}64$. \auroc at $H$ is not a pure lead-distance curve, because the positive set changes with $H$. At $H{=}64$ the positives are prefixes 0--63 tokens before onset. Their negatives include earlier prefixes of the \emph{same} harmful trajectories, which look very similar. At $H{=}512$, by contrast, almost every prefix of a harmful trajectory is positive, so the task becomes ``is this a harmful request that \qwen will comply with?''
+
+\para{Much of the long-horizon signal is visible in text.}
+The prompt alone gives \auroc 0.77 at $H{=}512$, and the prompt+prefix text model reaches 0.85. Activations add the most at short horizons and with history: at $H{=}64$, \histprobe scores 0.79 vs.\ 0.63 for \textprefix, while at $H{=}512$ the gap shrinks to 0.90 vs.\ 0.85. Because the benign source has no events, request-level detection inflates long-horizon \auroc for every method equally. \textprompt is therefore the right yardstick for that shortcut, and \histprobe beats it at every horizon.
+
+\para{The off-the-shelf Activation Oracle is the weakest non-trivial method.}
+Zero-shot, the \ao answers ``Yes'' to only 0.6--1.1\% of prefixes for q0 and 12--15\% for q1. Even after 1-D calibration of its logit margin, its best variant (layer 27, q0) scores 0.54 at $H{=}64$, with a CI that includes chance, and 0.76 at $H{=}512$. This is below every probe, text model, and self-report score at every horizon. Layer 27 (75\% depth) is the AO's best read layer, as in its training. \selfreport, which also verbalizes but uses the target itself, does much better (0.74 to 0.84). It ties single-position probes but stays below \histprobe.
+
+\subsection{Early warning}
+\label{sec:ew}
+
+\input{tables/early_warning}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.85\linewidth]{figures/early_warning.png}
+\caption{{\bf Early warning at about 5\% benign-trajectory false-alarm rate.} Bars show the fraction of unsafe trajectories alerted at least 64, 128, or 256 tokens before onset. \histprobe alerts on 56\% of trajectories at least 128 tokens ahead. The \ao bar shows the layer-27 q0 variant, which has the best \auroc but few alerts (22\%); the layer-18 q0 variant reaches 36\% (\tabref{tab:ew}).}
+\label{fig:ew}
+\end{figure}
+
+\Tabref{tab:ew} and \figref{fig:ew} report the deployment-oriented metric. At a realized test FAR of 3--6\%, \histprobe alerts on 56\% of unsafe trajectories at least 128 tokens before onset. Single-position probes and \textprefix reach 42\%, \selfreport 38\%, and the trained readers 36--37\%. Prompt-only text reaches only 17\%, and prevalence and token position never alert. The $\ge$64 and $\ge$128 columns nearly coincide because onsets are late (median token 360) and alerts usually fire at the first cutoffs ($t{=}32$--$64$). When an alert happens, it is almost always far ahead; the main failure is \emph{missed} trajectories (40\% for \histprobe, 56\% for the linear probe). With 88 unsafe trajectories, the 95\% binomial interval around 0.37 is about $\pm$0.10, so the advantage of \histprobe over the trained readers (0.56 vs.\ 0.37) is about two standard errors.
+
+\subsection{Does an explicit forecast representation help?}
+\label{sec:rq2}
+
+\input{tables/paired}
+
+\para{The forecast representation does not beat the direct reader.}
+\Tabref{tab:paired} compares seed-averaged out-of-fold predictions. The \forecast timing head trails \direct at every horizon: $\Delta$\auroc $=-0.040$, $-0.018$, $-0.033$, and $-0.018$ for $H=64$ to $512$. The difference is significant at $H{=}256$ ($p{=}0.002$) and $H{=}512$ ($p{=}0.014$) and not significant at $H\le128$. Reading answers from the forecast vectors through the shared QA head does not help either: it is significantly worse than \direct at $H\ge256$ ($p<0.001$). Early warning tells the same story: 36\% vs.\ 37\% of unsafe trajectories alerted at least 128 tokens ahead (\tabref{tab:ew}). An earlier run of the same code under a different software stack gave the same ordering (\appref{app:details}).
+
+\input{tables/controls}
+
+\para{Controls rule out shortcut explanations.}
+\Tabref{tab:controls} shows the ablations and controls. With shuffled activations, \auroc falls to 0.31--0.52 and only 3\% of unsafe trajectories are alerted early. With a constant mean activation, so that only position information remains, \auroc is 0.38--0.62 and there are no alerts. Adding a raw-activation bypass to \forecast does not help (0.78 and 0.80 at $H{=}128$ and $512$). The trained readers therefore rely on activation content, not on position or prompt-level artifacts in the training pipeline.
+
+\para{The bottleneck is the forecast, not the readout.}
+When we feed the \emph{gold} future bins to the \forecast QA head, it reaches 0.96 for occurrence within 512 and 0.97 for harmful recommendation within 512. The head can decode answers from a correct forecast. It stays weaker for the rare short-horizon questions (0.75 at 64 and 0.78 at 128), where a small head with positive weight 3 underfits classes at 1--2\% prevalence. The \forecast model falls short because its predicted forecast is no better than what an unconstrained reader learns directly.
+
+\subsection{Further analyses}
+\label{sec:extra}
+
+\para{One representation, several questions.}
+Both readers answer all trained questions from a single representation (\tabref{tab:controls}). \direct leads on harmful recommendation within 512 (0.82 vs.\ 0.79) and topic change within 128 (0.70 vs.\ 0.67). On the held-out question meaning, ``will the assistant refuse or back away later'', both are only weakly above chance, and \forecast generalizes worse (0.57$\pm$0.02 vs.\ 0.63$\pm$0.01). Behavior-type questions are nearly redundant with occurrence here, because 93 of 95 events are harmful recommendations.
+
+\para{Activation history is the most useful addition.}
+\begin{table}[t]
+\centering
+\caption{{\bf Effect of a 16-token activation history} on the layer-18 linear probe (\auroc, and fraction of unsafe trajectories alerted $\ge$128 tokens before onset at about 5\% FAR).}
+\label{tab:history}
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+\textsc{Probe input} & $H{=}64$ & $H{=}128$ & $H{=}256$ & $H{=}512$ & Alert $\ge$128 \\
+\midrule
+Last token only & 0.71 & 0.78 & 0.82 & 0.87 & 0.41 \\
++ 16-token mean & {\bf 0.79} \increase & {\bf 0.82} \increase & {\bf 0.86} \increase & {\bf 0.90} \increase & {\bf 0.56} \increase \\
+\bottomrule
+\end{tabular}
+\end{table}
+\Tabref{tab:history} isolates the history effect. Averaging the last 16 layer-18 activations improves \auroc by 0.08 at $H{=}64$ and 0.03 at $H{=}512$, and it raises early alerts from 41\% to 56\%. This one change matters more than any other modeling choice in our study, including the trained readers, which see only the last position.
+
+\para{Story setting.}
+\Tabref{tab:story} reports the fictional-harm setting, where the event is the first fictional-harm description in a story. Here, \emph{whether} harm happens is mostly fixed by the prompt: \textprompt reaches 0.84 at $H{=}512$, above \histprobe (0.81). Activations help at short horizons, \ie with \emph{when} the scene starts: \histprobe scores 0.79 at $H{=}64$ vs.\ 0.67 for \textprompt. \selfreport is poor (0.57--0.66), because \qwen does not consider fiction ``harmful content''. This matches our rubric, which does not treat fiction as an assistant violation. The \ao does relatively better here (0.66--0.73) than in the assistant setting.
+
+\input{tables/story}
+
+\para{Detection is easier than forecasting.}
+For comparison, a linear probe on all three layers separates already-unsafe prefixes from safe ones with \auroc 0.86 [0.79, 0.91] (71 positive prefixes from 22 families). This is above every forecaster at $H{=}64$.

@@ -221,7 +221,7 @@ def train_part2(kind, tr, va, te, seed, epochs=30, control=None, bypass=False, g
     xtr, ttr, Ytr, btr, ctr, behtr = tens(tr, control)
     xtr = xtr - mu
     def gold_vec(b, beh):
-        g = F.one_hot(b, 5).float(); return torch.cat([g, beh[:, :1].expand(-1, 4)], 1)
+        g = F.one_hot(b, 5).float(); return torch.cat([g, beh[:, :1].float().expand(-1, 4)], 1)
     for ep in range(epochs):
         m.train(); perm = torch.randperm(len(xtr), device=DEV)
         for bi in range(0, len(xtr), 128):
@@ -311,6 +311,8 @@ def e2(A):
     if SEL == "direct": configs = configs[:1]
     if SEL == "forecast": configs = configs[1:2]
     if SEL == "controls": configs = configs[2:]
+    if SEL == "preds": configs = configs[:2]       # rerun main pair, saving OOF predictions for paired tests
+    if SEL == "gold": configs = configs[7:]        # readout-ceiling diagnostic
     suffix = "" if SEL == "all" else "_" + SEL
     E2 = {}
     for kind, kw in configs:
@@ -329,6 +331,9 @@ def e2(A):
                 if split != "test": continue
                 r[f"{src}:{c}"] = metrics(te[c].values.astype(float), np.concatenate(v), te.family_id.values)
             src = "head" if kind == "forecast" else "qa"
+            if SEL in ("preds", "gold"):
+                np.savez(f"results/preds_{name}_seed{seed}.npz", row=te.row.values,
+                         **{f"{src_}:{c}": np.concatenate(v) for (sp, src_, c), v in preds.items() if sp == "test"})
             r["early_warning_y512"] = early_warning(va, te, np.concatenate(preds[("val", src, "y512")]), np.concatenate(preds[("test", src, "y512")]))
             E2[f"{name}|seed{seed}"] = r
             print(name, seed, {k: round(v.get("auroc", np.nan), 3) for k, v in r.items() if isinstance(v, dict) and "auroc" in v or (isinstance(v, dict) and "n" in v)}, flush=True)

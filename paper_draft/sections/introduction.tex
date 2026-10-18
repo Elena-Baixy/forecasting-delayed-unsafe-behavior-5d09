@@ -1,0 +1,24 @@
+\section{Introduction}
+\label{sec:intro}
+
+\input{figures/overview}
+
+Most safety monitors for language models answer one question: is the text produced so far unsafe? This question comes too late for an important class of failures. A model asked for a ``long-form overview'' of a dangerous topic can spend hundreds of tokens on history and general context, and only then move into step-by-step instructions. A monitor that judges only the current text raises an alarm after the harmful content is already on the screen. A monitor that can \emph{forecast} the turn could stop, steer, or escalate the generation before any harm is emitted.
+
+There is good reason to think such forecasts are possible. Hidden states carry information about future tokens~\citep{pal2023futurelens}, about global properties of the coming response~\citep{dong2025emergent}, and even about how many tokens remain~\citep{merzouk2026remaining}. Activation verbalizers make this information readable. LatentQA~\citep{pan2024latentqa} and Activation Oracles (AOs)~\citep{karvonen2025activation} fine-tune a copy of the model to answer natural-language questions about another model's activations. This makes them a natural candidate for asking a model ``will this response turn harmful later?''
+
+However, existing work does not test this. Verbalizers are evaluated on questions about the \emph{current} state: hidden personas, secret words, or the next few tokens~\citep{karvonen2025activation,bauer2026building}. Streaming guards mostly detect harm already present in the prefix~\citep{li2025judgment,sharma2025constitutional}, and the one forecasting guard we know of is text-only and looks only a short distance ahead~\citep{kavumba2026predict}. On the other hand, recent studies warn that trained AOs at best tie linear probes~\citep{bauer2026building}. Any claim that ``verbalizers forecast'' must therefore beat probes and text baselines on identical inputs. Finally, if a reader trained on future labels does well, it is unclear whether the gain comes from the \emph{supervision} or from an \emph{architecture} that explicitly represents the future.
+
+We study both questions on natural generations of \qwen (\figref{fig:overview}). {\bf Can the activations of a still-safe prefix tell us that a clear safety violation will first appear within the next $H$ tokens?} We build a family-split benchmark of 3,520 safe prefixes from 880 prompt families, with token-level onsets from an LLM annotator and labels that account for censoring. We compare prevalence, position, and text baselines, activation probes, \qwen self-report, and an off-the-shelf AO. {\bf Does an explicit future representation help?} We train two readers with the same activations, labels, QA head, and budget. One is a direct AO-style reader. The other routes everything through horizon queries, forecast vectors, and a censoring-aware timing head.
+
+Delayed onsets are partly forecastable. A linear probe on the last token reaches \auroc 0.74 at $H{=}64$ and 0.87 at $H{=}512$. Adding the mean of the last 16 layer-18 activations raises this to 0.79 and 0.90. At a 5\% benign false-alarm rate, this history probe flags 56\% of unsafe trajectories at least 128 tokens before onset, against 42\% for a single-position probe or a prompt+prefix text model. The off-the-shelf AO is the weakest non-trivial method: it says ``No'' to about 99\% of prefixes and scores \auroc 0.54 at $H{=}64$. The forecast representation does not beat the matched direct reader. Its timing head trails the direct reader by 0.02--0.04 \auroc, with family-paired bootstrap intervals that exclude zero at $H{\ge}256$. Both trained readers are no better than a linear probe with history.
+
+Our contributions are:
+\begin{itemize}[leftmargin=*,itemsep=0pt,topsep=0pt]
+    \item We construct a lead-distance benchmark for delayed unsafe behavior on fresh \qwen generations. It is split by prompt family before generation, uses token-level onsets, and checks that observer inputs are causal.
+    \item We measure how forecastable onsets are at 64--512 tokens for text baselines, probes, self-report, an off-the-shelf AO, and trained readers. Activation history is the single most useful addition, and an off-the-shelf AO is strongly biased toward ``safe''.
+    \item We run a matched comparison between a direct AO-style reader and a forecast-representation reader. The explicit forecast adds nothing, so the gain over zero-shot verbalizers comes from future-event supervision.
+    \item We complement the main results with shortcut controls (shuffled and constant activations, prompt-only text), a readout-ceiling diagnostic, a held-out question meaning, and a separate fictional-harm setting.
+\end{itemize}
+
+\secref{sec:related} reviews related work. \secref{sec:method} describes the benchmark and the observers. \secref{sec:results} reports results, and \secref{sec:discussion} discusses their meaning and limits.

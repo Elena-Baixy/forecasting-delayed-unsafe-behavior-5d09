@@ -32,7 +32,7 @@ for key, title in [("E1_assistant_cv", "Assistant safety (5-fold family CV)"), (
 try:
     import glob
     E2 = {}
-    for fn in sorted(glob.glob("results/results_e2*.json")): E2.update(json.load(open(fn)))
+    for fn in ["results/results_e2_preds.json", "results/results_e2_controls.json", "results/results_e2_gold.json"]: E2.update(json.load(open(fn)))
     groups = {}
     for k, v in E2.items(): groups.setdefault(k.split("|")[0], []).append(v)
     cols = ["qa:y64", "qa:y128", "qa:y256", "qa:y512", "head:y128", "head:y512", "qa:harmrec512", "qa:topic128", "qa:refusal_later"]

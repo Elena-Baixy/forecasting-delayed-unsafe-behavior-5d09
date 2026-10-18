@@ -1,0 +1,18 @@
+\begin{table}[t]
+\centering
+\caption{{\bf Story setting} (event = first fictional-harm description; 439 safe prefixes, 96 families; prevalence 7.5\% at $H{=}64$ to 64\% at $H{=}512$). \auroc, 5-fold family CV. Best in {\bf bold}.}
+\label{tab:story}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textsc{Method} & $64$ & $128$ & $256$ & $512$ \\
+\midrule
+Token position & 0.64 & 0.65 & 0.56 & 0.44 \\
+\textprompt & 0.67 & 0.71 & {\bf 0.72} & {\bf 0.84} \\
+\textprefix & 0.71 & 0.71 & 0.71 & {\bf 0.84} \\
+\histprobe & {\bf 0.79} & {\bf 0.79} & 0.71 & 0.81 \\
+\selfreport & 0.57 & 0.59 & 0.61 & 0.66 \\
+\ao (L27, q0) & 0.70 & 0.66 & 0.69 & 0.72 \\
+\ao (L18, q1) & 0.73 & 0.71 & 0.69 & 0.67 \\
+\bottomrule
+\end{tabular}
+\end{table}

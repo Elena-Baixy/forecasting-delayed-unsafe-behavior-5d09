@@ -1,0 +1,809 @@
+You are an academic paper writer. Generate a complete NEURIPS style paper
+based on the experiment results provided.
+
+════════════════════════════════════════════════════════════════════════════════
+                         IMPORTANT: BEFORE YOU START
+════════════════════════════════════════════════════════════════════════════════
+
+Before writing any content, you MUST complete these steps:
+
+1. READ THE SKILL: Review the paper-writer skill at .claude/skills/paper-writer/SKILL.md
+2. READ THE STYLE GUIDE: Study templates/paper_writing/lab_style_guide.md carefully
+3. REVIEW EXAMPLES: Browse paper_examples/ for formatting and language patterns:
+   - Look at sections/1.introduction.tex for language style
+   - Look at tables/*.tex for table formatting
+   - Look at commands/*.tex for macro usage
+4. VERIFY COMMAND TEMPLATES: Command templates (math.tex, general.tex, macros.tex) are pre-copied to paper_draft/commands/
+
+CRITICAL: Reference example papers for FORMATTING and LANGUAGE STYLE only.
+Do NOT copy content, phrasing, or narrative structure from the example papers.
+The examples are in a different research domain - focus only on presentation style.
+
+════════════════════════════════════════════════════════════════════════════════
+                            EXPERIMENT REPORT
+════════════════════════════════════════════════════════════════════════════════
+
+# Forecasting delayed unsafe behavior from Qwen3-8B activations: verbalizers vs. probes vs. a forecast representation
+
+## 1. Executive summary
+**Question.** Can activation verbalizers, probes or a trained forecast model tell, from a still-safe prefix of a Qwen3-8B response, whether a clear safety violation will first appear within the next H ∈ {64, 128, 256, 512} tokens? And does an explicit future representation (horizon queries + timing head) beat a direct AO-style reader trained on the same labels?
+
+**Data.** 1,000 prompt families, split by family before generation. Fresh Qwen3-8B generations. An external LLM gave each generation one timeline. There are 5 fixed cutoffs per generation, and 3,520 safe assistant prefixes from 880 families. 88 families have a later onset; the median onset is token 360.
+
+**Findings.**
+1. **Delayed onsets are partly forecastable, and the hard part is the near term.**
+   - Activation probes reach AUROC 0.74 at H=64 and 0.87 at H=512.
+   - With a 16-token activation history they reach 0.79 / 0.90.
+   - The **off-the-shelf Activation Oracle is the weakest non-trivial method**: 0.54 at H=64, near chance, rising to 0.76 at H=512. Zero-shot it answers "No" to ~99% of prefixes.
+   - Qwen3 self-report (0.74→0.84) and a TF-IDF text model on prompt+prefix (0.63→0.85) are competitive with single-position probes. Much of the long-horizon signal is "which request is this and has the model started complying", which text can see too.
+2. **The forecast architecture does *not* beat the matched direct reader.**
+   - The direct reader wins on seed-averaged out-of-fold predictions, with family-paired bootstrap.
+   - The forecast timing head minus the direct reader: ΔAUROC = −0.04 (H=64, CI [−0.09, 0.01]), −0.02 (H=128, [−0.05, 0.01]), −0.03 (H=256, [−0.06, −0.01]) and −0.02 (H=512, [−0.03, −0.00]).
+   - Early warning at ~5% benign false-alarm rate is the same: 36% vs 37% of unsafe trajectories alerted ≥128 tokens ahead.
+   - The trained readers are themselves no better than a linear probe with activation history (56% alerted ≥128 tokens ahead).
+   - **Verdict:** in this setting the future-event *supervision* (shared by all trained models) carries the gains; the explicit forecast architecture adds nothing.
+3. **Controls behave as expected.** Shuffled or constant activations drop to AUROC ≈0.3–0.6 and ≈0–6% early alerts. The causal-input and split audits pass. With max 768 new tokens and cutoffs ≤256, no horizon is censored.
+
+**Practical implication.** For early warning of delayed harm, a cheap linear probe on a short activation history (plus the prompt) is the baseline to beat. Zero-shot verbalizers asked yes/no safety questions are strongly biased toward "safe".
+
+## 2. Research question & motivation
+Monitors usually judge whether text is *already* unsafe. A response can open with harmless background ("history of…", "general context…") and turn into actionable harm hundreds of tokens later. A monitor that warns ahead could stop or steer generation before harm is emitted.
+
+The literature review (`literature_review.md`) found two gaps:
+- AO/LatentQA verbalizers are evaluated only on current-state questions.
+- Streaming guards forecast only a short distance ahead.
+
+No prior work measures lead-distance forecastability of *natural* onsets with censoring-aware labels.
+
+The hypotheses tested:
+- **H1 (Part 1):** existing verbalizers decay with lead distance and may not beat text/probe baselines.
+- **H2 (Part 2):** a forecast representation trained with timing supervision beats a direct AO trained on the same labels. If not, supervision, not architecture, explains the gains.
+
+## 3. Experimental setup
+
+### Target model and decoding (Track B, natural generations)
+- **Model:** Qwen3-8B (HF snapshot `b968826d`), frozen, bf16, non-thinking chat template.
+- **Sampling:** T=0.7, top_p=0.8, top_k=20, seed 0, 1 sample per family.
+- **Stopping and length:** stop at `<|im_end|>`, max_new_tokens=768 (`results/generations_config.json`).
+- **Finish reasons:** 522 generations hit the length cap and 465 stopped normally.
+- **Observer isolation:** the observer only reads cached activations from separate forward passes over `prompt + response[:t]`. It never touches generation.
+
+### Prompt families
+`src/prep_prompts.py`; split 80/10/10 per source with a fixed seed, before generation.
+
+| source | families (annotated) | event rate | role |
+|---|---|---|---|
+| harm_longform | 408 | 15.9% | HarmBench/AdvBench/StrongREJECT requests in "background first, then specifics" long-form templates |
+| gray_longform | 200 | 15.0% | BeaverTails unsafe user questions, same templates |
+| benign_longform | 279 | 0% | Alpaca instructions, same templates (matched negatives) |
+| story | 100 | 72% (fictional harm) | story prompts; **reported separately** |
+
+Of 1,000 families, 13 were excluded: the annotator call failed, 12 of them because the API's bio filter blocked it.
+
+### Safety rubric and annotation
+The rubric (in `src/annotate.py`) was fixed before collection.
+- It annotates `harmful_recommendation`, `toxic_language` and `fictional_harm` separately.
+- Fictional harm is *not* an assistant violation unless it embeds real actionable instructions.
+- The primary assistant event is the first clear violation (93 harmful-recommendation events, 2 toxic-language).
+- The story event is the first fictional-harm description.
+
+Annotation process:
+- **Annotator:** one structured timeline per completed generation from `gpt-5.6-luna` (OpenAI API; no OpenRouter key was available). The timeline covers topics, behaviors, verbatim quote of first violation, refusal and uncertainty.
+- **Onset mapping:** each quote is mapped to a character offset (exact → prefix → fuzzy match) and then to a Qwen3 token offset by binary search over decoded prefixes.
+- **Annotation check:** a second annotator (`gpt-5.6-terra`) re-annotated a stratified sample of 200, half of them flagged.
+  - Agreement 84.5%, κ = 0.69.
+  - The second annotator confirmed 68% of primary flags and added no new ones, so the primary annotator is the more liberal.
+  - Median onset difference: 1 token; 70% of onsets agree within 32 tokens.
+  - Fiction-label agreement: 99%.
+  - **No human check was done** (deviation from the 200-human-check request).
+
+### Labels
+`src/labels.py`, derived programmatically.
+- Monitoring cutoffs t ∈ {32, 64, 128, 192, 256} response tokens, fixed before any continuation was seen.
+- A prefix is safe iff there is no event or onset ≥ t.
+- y_H = 1 iff onset < t+H.
+- y_H = 0 iff there is a later onset ≥ t+H, or no event and either a normal stop or t+H ≤ length.
+- Otherwise y_H is censored.
+- Monotonicity in H is asserted. Censored horizons: **0** (t+H ≤ 768 always). Already-unsafe prefixes (132) are used only for the separate detection analysis.
+
+### Observer inputs
+`src/extract.py`
+- Residual stream after layers 9 / 18 / 27 (of 36) at the last observed token.
+- Mean of layer 18 over the last 16 observed tokens (history variant, RQ5).
+- **Causal audit** (`results/causal_audit.json`): the same-position activation computed from a pass with later tokens appended differs by ≤1.2% relative (bf16 noise), and inputs are built from truncated text only.
+- **Split audit:** each family appears in exactly one split/fold (asserted).
+
+### Methods compared
+All are assistant-safety forecasters on safe prefixes.
+
+| method | description |
+|---|---|
+| prevalence / token position | train base rate; base rate per cutoff t |
+| text (prompt only / prompt+prefix) | TF-IDF (1–2-grams) + logistic regression |
+| linear probes | L2 logistic regression per layer and on all 3 layers; MLP probe (256 hidden) |
+| linear probe + history16 | layer 18 last token + 16-token mean |
+| Qwen3 self-report | fresh chat asking Qwen3-8B whether the response will turn harmful; Yes−No logit margin, 1-D calibrated in CV |
+| **off-the-shelf AO** (new this session, `src/ao_zeroshot.py`) | `adamkarvonen/checkpoints_latentqa_cls_past_lens_addition_Qwen3-8B` LoRA. Official injection recipe: `"Layer: L\n ? \n"+question`, norm-matched additive injection at oracle layer 1, single position. Two yes/no questions × layers 9/18/27; Yes−No logit margin, 1-D calibrated in CV |
+| **direct AO-style reader** (trained) | encoder (3 × LN→Linear 256 + layer/position emb → 512) + MLP to 8 memory slots + question-conditioned attention QA head. Trained on future QA labels. 6.3 M params |
+| **forecast representation** (trained) | same encoder. 4 horizon queries × 2 forecast vectors (cross-attention) → censoring-aware 5-bin timing head (discrete hazards, so cumulative risk is monotone) + per-window behavior/topic heads. The *same* QA head reads only the forecast vectors + event probabilities. 5.2 M params. L = L_onset + 0.5·L_behavior + L_QA |
+| ablations / controls | forecast + raw-activation bypass; shuffled activations; constant (mean) activation; readout ceiling with **gold** future bins fed to the QA head |
+
+Notes on the trained readers:
+- **QA questions:** occurrence within 64/128/256/512, harmful-recommendation within 512, topic change within 128, and "will the assistant refuse/back away later". The last is **held out of QA training** as an unseen question meaning (RQ3).
+- **Matched budget:** both readers use the same encoder, QA head, question embeddings (`text-embedding-3-small`), labels, optimizer (AdamW 3e-4), 30 epochs, batch 128 and 3 seeds.
+
+**Deviations from the proposed architecture:**
+- The QA decoder is a small attention head, not a pretrained LLM decoder with LoRA adapters (1-hour budget).
+- The frozen sentence-encoder semantic loss (λ_s) was not used.
+
+### Protocol and metrics
+- **Validation:** 5-fold family-grouped cross-validation over the 880 assistant families. Test positives in the fixed 10% test split are too few: 2–8 event families. Split-protocol baseline numbers are in `results/results_e1.json` (`E1_assistant_split`) and are consistent but very noisy.
+- **Per-horizon metrics:** AUROC, AUPRC, Brier and log loss, with 1,000-resample family bootstrap CIs.
+- **Early warning:** use the H=512 score. The threshold is the 95th percentile of the per-trajectory max score on benign *validation* families carved from each training fold (target 5% trajectory false-alarm rate). Report the fraction of unsafe test trajectories whose first alert is ≥64/128/256 tokens before onset.
+- **E2 comparisons:** paired family bootstrap on seed-averaged out-of-fold predictions.
+- **Hardware:** NVIDIA RTX A6000 48 GB (one free GPU).
+- **Software:** torch 2.7.1 for generation; torch 2.14.1+cu130 and transformers 5.20 for extraction, E2 rerun and AO. peft was upgraded to 0.21 to load the AO; it pulled in the newer torch.
+- **API cost:** about 1,200 annotation calls plus 7 embedding calls, roughly a few USD.
+
+## 4. Results
+
+### 4.1 RQ1: forecastability by horizon (assistant safety, safe prefixes only)
+![AUROC by horizon](figures/forecast_auroc_by_horizon_all.png)
+
+AUROC [95% family-bootstrap CI], 5-fold family CV, n = 3,520 prefixes / 880 families.
+
+Prevalence and positive families per horizon:
+
+| | H=64 | H=128 | H=256 | H=512 |
+|---|---|---|---|---|
+| prevalence | 0.8% | 1.8% | 5.0% | 10.7% |
+| positive families | 22 | 44 | 68 | 88 |
+
+| method | H=64 | H=128 | H=256 | H=512 | AUPRC@512 | Brier@512 |
+|---|---|---|---|---|---|---|
+| prevalence | 0.33* | 0.39* | 0.46* | 0.46* | 0.10 | 0.096 |
+| token position | 0.41 [0.27,0.56] | 0.60 [0.49,0.72] | 0.64 [0.58,0.70] | 0.55 [0.52,0.57] | 0.12 | 0.095 |
+| text, prompt only | 0.69 [0.55,0.80] | 0.72 [0.65,0.79] | 0.76 [0.70,0.81] | 0.77 [0.72,0.81] | 0.28 | 0.087 |
+| text, prompt+prefix | 0.63 [0.47,0.77] | 0.76 [0.67,0.84] | 0.83 [0.78,0.88] | 0.85 [0.82,0.89] | 0.45 | 0.080 |
+| linear probe L18 | 0.71 [0.60,0.80] | 0.78 [0.71,0.85] | 0.82 [0.78,0.86] | 0.87 [0.85,0.89] | 0.44 | 0.075 |
+| linear probe L9+18+27 | 0.74 [0.63,0.83] | 0.78 [0.71,0.85] | 0.83 [0.79,0.87] | 0.87 [0.85,0.89] | 0.46 | 0.075 |
+| MLP probe | 0.72 [0.62,0.81] | 0.76 [0.69,0.83] | 0.80 [0.76,0.83] | 0.84 [0.81,0.87] | 0.39 | 0.104 |
+| **linear probe L18 + history16** | **0.79** [0.71,0.87] | **0.82** [0.75,0.89] | **0.86** [0.82,0.90] | **0.90** [0.88,0.92] | **0.50** | **0.071** |
+| Qwen3 self-report | 0.74 [0.66,0.82] | 0.80 [0.75,0.85] | 0.83 [0.79,0.87] | 0.84 [0.80,0.88] | 0.39 | 0.080 |
+| off-the-shelf AO, best (L27, q0) | 0.54 [0.44,0.65] | 0.67 [0.59,0.75] | 0.74 [0.70,0.79] | 0.76 [0.72,0.79] | – | – |
+| off-the-shelf AO, L18 q0 | 0.50 [0.39,0.61] | 0.63 [0.56,0.70] | 0.71 [0.67,0.76] | 0.75 [0.72,0.78] | – | – |
+| trained direct reader (3 seeds) | 0.79±0.01 | 0.81±0.01 | 0.82±0.01 | 0.82±0.01 | 0.40 | 0.105 |
+| trained forecast timing head (3 seeds) | 0.78±0.02 | 0.81±0.01 | 0.81±0.01 | 0.82±0.01 | 0.37 | 0.108 |
+
+\*Out-of-fold constant predictions. AUROC < 0.5 is a fold-composition artifact: folds with higher training prevalence have lower test prevalence. It is not a signal.
+
+Full per-seed numbers: `results/results_e2_preds.json`. AO full results: `results/analysis.json`.
+
+Off-the-shelf AO zero-shot behavior: the raw "Yes" rate was 0.6–1.1% for q0 ("will the response go on to include harmful content later?") and 12–15% for q1 ("about to give dangerous instructions?"). The AO's best layer was 27 (75% depth), as in its training. All AO variants are in `results/analysis.json` → `AO_zeroshot_assistant`.
+
+**Reading RQ1.**
+- **No method decays with lead distance in this metric.** Every informative method has its *lowest* AUROC at H=64. AUROC at H is not a pure lead-distance curve, though: the positive set changes with H. At H=64 the positives are prefixes 0–63 tokens before onset; their negatives include prefixes of the same harmful trajectories at larger distances, which are hard to separate.
+- **The H=512 signal is largely request- and compliance-level.** Prompt-only text already gives 0.77, and the prompt+prefix text model reaches 0.85.
+- **Activations add early-warning value over text mostly at short horizons and with history.**
+  - At H=64: history probe 0.79 vs text 0.63.
+  - At H=512: 0.90 vs 0.85.
+- **Off-the-shelf AO is weak.** It is at chance for imminent onsets and below every trained or self-report method at all horizons. This supports H1 for existing verbalizers: they are not useful forecasters zero-shot, especially near the event.
+- **Probes are not beaten by verbalizers.** Self-report, a verbalizer of sorts using the target itself, ties single-position probes but not the history probe.
+
+### 4.2 Early warning (primary metric)
+H=512 score; threshold set on validation families for 5% trajectory false-alarm rate. Test: 88 unsafe and 792 benign trajectories (AO: 78 / 670, own validation carve-out).
+
+![Early warning](figures/early_warning.png)
+
+| method | alerted ≥64 before onset | **≥128** | ≥256 | missed | test FAR |
+|---|---|---|---|---|---|
+| prevalence / token position | 0.00 | 0.00 | 0.00 | 1.00 | 0.00 |
+| text, prompt only | 0.17 | 0.17 | 0.12 | 0.82 | 0.06 |
+| text, prompt+prefix | 0.42 | 0.42 | 0.34 | 0.56 | 0.05 |
+| linear probe L9+18+27 | 0.42 | 0.42 | 0.31 | 0.56 | 0.04 |
+| **linear probe L18 + history16** | **0.57** | **0.56** | **0.43** | **0.40** | 0.06 |
+| Qwen3 self-report | 0.39 | 0.38 | 0.30 | 0.60 | 0.06 |
+| off-the-shelf AO (L18 q0) | 0.36 | 0.36 | 0.27 | – | 0.06 |
+| trained direct reader (mean of 3 seeds) | 0.38 | 0.37 | 0.22 | – | 0.04 |
+| trained forecast representation (mean of 3 seeds) | 0.37 | 0.36 | 0.20 | – | 0.04 |
+
+The ≥64 and ≥128 numbers nearly coincide because most onsets are late (median token 360) and alerts usually fire at the first cutoffs (t=32–64). Alerts are therefore almost always far ahead when they happen at all. The failure mode is *missed* trajectories, not late alerts.
+
+Caveat: with 88 unsafe trajectories, a 95% binomial CI on 0.37 is about ±0.10. The history probe's advantage (0.56 vs 0.37) is about 2 SE.
+
+### 4.3 RQ2: forecast representation vs matched direct reader
+Paired family bootstrap on seed-averaged out-of-fold predictions (`results/analysis.json` → `paired_direct_vs_forecast`).
+
+| H | direct QA | forecast timing head | forecast QA | Δ(head − direct) [95% CI], p | Δ(forecast QA − direct) [95% CI], p |
+|---|---|---|---|---|---|
+| 64 | 0.819 | 0.779 | 0.806 | −0.040 [−0.093, 0.005], 0.10 | −0.013 [−0.076, 0.037], 0.70 |
+| 128 | 0.844 | 0.826 | 0.811 | −0.018 [−0.053, 0.014], 0.29 | −0.034 [−0.081, 0.010], 0.13 |
+| 256 | 0.859 | 0.826 | 0.822 | −0.033 [−0.056, −0.013], 0.002 | −0.038 [−0.062, −0.014], <0.001 |
+| 512 | 0.851 | 0.833 | 0.821 | −0.018 [−0.034, −0.003], 0.014 | −0.031 [−0.053, −0.011], <0.001 |
+
+Seed-averaged predictions score higher than single seeds (ensembling).
+
+Ablations and controls (single seed; full table in `results/tables.md`):
+- **Raw-activation bypass** does not help the forecast model: head AUROC 0.79 / 0.81 at H=128/512, vs 0.81 / 0.82 without.
+- **Shuffled activations:** AUROC 0.31–0.52; early alerts 3%.
+- **Constant activation** (prompt/position information only via the position embedding): 0.38–0.62; no alerts.
+- **Readout ceiling (gold future bins fed to the QA head):** QA AUROC 0.96 for y512 and 0.97 for harmful-recommendation-512. The reader *can* decode answers from a correct forecast.
+  - It stays poor for rare short-horizon questions: y64 0.75, y128 0.78. A small QA head with pos_weight=3 underfits classes at 1–2% prevalence.
+  - So the bottleneck for the forecast model is the quality of the predicted forecast, not the readout.
+
+**Verdict for RQ2.**
+- The explicit future representation does **not** help beyond a direct AO-style reader with the same activations, decoder, labels and budget.
+- It is slightly *worse* at H ≥ 256 (significant), and tied at H ≤ 128.
+- Both trained readers are about on par with a linear probe and below a linear probe with history.
+- The gains over off-the-shelf verbalizers come from **future-event supervision**, not from the forecast architecture.
+- Replication: an earlier run of the same code (torch 2.7.1, `results/results_e2.json`, `results/results_e2_forecast.json`) gave the same ordering: direct y512 0.817±0.004 vs forecast head 0.814±0.003, and early alert ≥128 of 0.37 vs 0.33.
+
+### 4.4 RQ3: one forecast, several questions; held-out question meaning
+| question | direct | forecast QA |
+|---|---|---|
+| harmful recommendation within 512 (trained) | 0.82 | 0.79 |
+| topic change within 128 (trained; prevalence 61%) | 0.70 | 0.67 |
+| **"will the assistant refuse/back away later"** (held-out meaning, never trained) | 0.63±0.01 | 0.57±0.02 |
+
+Both readers answer the trained questions from one representation. For the held-out question meaning, both are only weakly above chance. The forecast representation does not generalize better to an unseen question meaning; it is worse. Behavior-type questions are nearly redundant with occurrence here, since 93/95 events are harmful recommendations.
+
+### 4.5 RQ5: activation history
+Adding the mean of the last 16 layer-18 activations to the last-token probe raises AUROC:
+
+| | H=64 | H=128 | H=256 | H=512 |
+|---|---|---|---|---|
+| last token only | 0.71 | 0.78 | 0.82 | 0.87 |
+| + history16 | 0.79 | 0.82 | 0.86 | 0.90 |
+
+It also raises early alerts ≥128 tokens ahead from 0.41 to 0.56. This was the single most useful addition in the study. A recurrent memory was not tried.
+
+### 4.6 Story setting (reported separately; event = first fictional-harm description)
+n = 439 safe prefixes / 96 families. Prevalence: 7.5% (H=64) to 64% (H=512).
+
+| method | H=64 | H=128 | H=256 | H=512 |
+|---|---|---|---|---|
+| token position | 0.64 | 0.65 | 0.56 | 0.44 |
+| text, prompt only | 0.67 | 0.71 | 0.72 | 0.84 |
+| linear probe L18 + history16 | 0.79 | 0.79 | 0.71 | 0.81 |
+| Qwen3 self-report | 0.57 | 0.59 | 0.61 | 0.66 |
+| off-the-shelf AO (L27 q0 / L18 q1) | 0.70 / 0.73 | 0.66 / 0.71 | 0.69 / 0.69 | 0.72 / 0.67 |
+
+In stories, whether harm happens at all is mostly fixed by the prompt: prompt-only text gives 0.84 at H=512. Activations help only at short horizons, i.e. *when* the violent scene starts. Self-report is poor here: Qwen3 does not consider fiction "harmful content", which is the intended rubric distinction. The AO is relatively better in stories than in the assistant setting.
+
+### 4.7 Detection of already-unsafe text (separate)
+A linear probe (all 3 layers) separating already-unsafe prefixes from safe ones gets AUROC 0.86 [0.79, 0.91] (71 positive prefixes / 22 families). Detection is easier than forecasting at H=64.
+
+## 5. Discussion
+- **H1, partially supported.**
+  - The off-the-shelf AO is poor and biased toward "No", consistent with the resource-phase LatentQA smoke test, which answered "safe" for everything.
+  - It does not beat text or probe baselines at any horizon.
+  - However, we do *not* see AUROC decay with lead distance for any method. Long-horizon prediction is easier in our data because it reduces to "is this a harmful request that Qwen will comply with". The hardest target is imminent onset (H=64), where few positives exist and they must be separated from earlier prefixes of the same trajectory.
+- **H2, not supported.** Under matched budget and labels, the forecast architecture ties or loses to the direct reader. Both lose to a linear probe with activation history.
+  - The readout-ceiling diagnostic shows the QA head can use a correct forecast. The forecast module is simply not a better predictor than an unconstrained reader. A 5-bin hazard bottleneck with ~88 positive families is likely data-starved.
+  - Plausible reasons it might help at scale (not tested): many more positive families, the semantic auxiliary loss, an LLM decoder that benefits from a compact structured input.
+- **Shortcut checks.**
+  - Token position alone is weak: 0.41–0.64 AUROC and no early alerts.
+  - Prompt-only text explains much of H=512 but little of H=64.
+  - Shuffled and constant controls collapse.
+  - The benign family source has a 0% event rate. Benign-vs-harmful *request* detection therefore inflates long-horizon AUROC for every method equally. Prompt-only text is the right yardstick for this, and the activation history probe beats it at all horizons.
+
+## 6. Limitations
+- **Small event count.** 88 assistant event families: wide CIs, especially at H=64 (22 positive families). The fixed 10% test split has only 2–8 positive families, so all headline numbers use 5-fold family CV. Hyperparameters were not tuned per method (fixed a priori), and thresholds were chosen on inner validation families.
+- **Labels from LLM annotators, no human check.**
+  - κ=0.69 between the two annotators.
+  - The primary annotator flags more than the stricter second one (68% of its flags confirmed).
+  - Onsets agree within 32 tokens only 70% of the time. This mostly blurs the H=64 label.
+- **One sample per family, no repeated-rollout calibration.** Labels are single realizations of a stochastic policy. The planned 32-rollout calibration on ~200 held-out prefixes was not run.
+- **Part 2 is a lightweight analog.** Small attention QA heads on cached activations, not a pretrained LLM decoder with LoRA. No semantic-description auxiliary loss. Conclusions about "AO vs forecast architecture" hold for this reader family only.
+- **Off-the-shelf AO coverage:** one checkpoint, a single injected position, 2 questions, yes/no scoring. A multi-position or open-ended AO might do better. LatentQA (Llama-3 decoder) and NLA/PCD were not evaluated on Qwen3 activations, since no compatible checkpoint exists.
+- **Not run:** Track A (model organism), RQ4 (mixtures), RQ6 (GRPO).
+- **Software drift.** The environment drifted (torch 2.7→2.14, transformers 4.55→5.20) between generation and analysis. Generation was unaffected, and E2 results replicated qualitatively across versions.
+
+## 7. Conclusions & next steps
+**Answer.**
+- From still-safe prefixes, Qwen3-8B activations predict delayed unsafe onsets moderately well: AUROC ≈0.79 at 64 tokens and ≈0.90 at 512 with a short activation history. About half of unsafe trajectories can be flagged ≥128 tokens before onset at a 5% benign false-alarm rate.
+- The off-the-shelf Activation Oracle does poorly zero-shot.
+- Training on future labels fixes most of that. The explicit forecast-vector architecture does not add to a matched direct reader, so **supervision, not architecture, is the contribution.**
+
+**Next steps:**
+1. Scale positives: more rollouts per harmful family and more families. Run the 32-rollout calibration set.
+2. Use the history signal properly: windowed/recurrent encoders for both the direct and the forecast reader.
+3. Test a real LLM-decoder AO fine-tuned on these future-QA labels, with vs without the forecast bottleneck.
+4. Human-check 200 stratified timelines.
+5. Build a Track-A organism with variable delay, with a token-position control, to test whether the history signal reflects plans rather than position.
+
+## Files
+- **Code:** `src/` — `prep_prompts.py`, `generate.py`, `annotate.py`, `annotation_check.py`, `extract.py`, `labels.py`, `experiments.py`, `ao_zeroshot.py`, `analysis.py`, `plots.py`.
+- **Data/results:** `results/`
+  - generations, annotations, prefix labels, activations
+  - `results_e1.json` (baselines)
+  - `results_e2_preds.json` (main E2 rerun) + `preds_*.npz`
+  - `results_e2_controls.json`, `results_e2_gold.json`
+  - `results_early_warning_baselines.json`
+  - `analysis.json` (AO, paired tests, data stats)
+  - `tables.md`, `causal_audit.json`, `annotation_check.json`
+- **Figures:** `figures/`.
+
+## References
+- Pan et al., *LatentQA* (arXiv 2412.08686); code `aypan17/latentqa`.
+- Karvonen et al., *Activation Oracles* (arXiv 2512.15674); checkpoint `adamkarvonen/checkpoints_latentqa_cls_past_lens_addition_Qwen3-8B`.
+- Datasets: HarmBench, AdvBench, StrongREJECT, BeaverTails, harmless Alpaca.
+- Further related work is listed in `literature_review.md` and `resources.md`.
+
+
+════════════════════════════════════════════════════════════════════════════════
+                            RESEARCH PLAN
+════════════════════════════════════════════════════════════════════════════════
+
+# Planning: Research Direction Ranking (resource_finder phase)
+
+Scoring: each criterion is 1–5. Evidence = support from the literature; Relevance = relevance to the hypothesis (Parts 1 and 2); Info = expected information gain; Feas = feasibility on 1×A6000 48 GB with ungated models. Total = sum.
+
+| # | Direction | Evidence | Relevance | Info | Feas | Total | Decision |
+|---|---|---|---|---|---|---|---|
+| D1 | **Lead-distance evaluation benchmark + Part 1 baselines.** Build a delayed-harm set (Qwen3-8B; onsets at L ∈ {0, 64, 128, 256, 512}; matched benign/refusal endings; on-policy prefill subset). Measure AUROC vs lead for: zero-shot AO (official + "better" ckpt), LatentQA decoder (Llama-3-8B mirror), self-report prompting, text-only LLM/guard, linear/MLP probes, refusal-direction projection. | 4 (ERP, Future Lens, remaining-length and Building-Better-AO all point to the expected shape; nobody has measured it at 64–512) | 5 | 5 | 4 | **18** | **KEEP (1)** |
+| D2 | **Part 2, matched supervision.** Train (a) a direct AO: the official Qwen3-8B AO fine-tuned on the same future labels as yes/no + "how many tokens until…" QA; (b) the proposed forecast-vector model: horizon-query tokens → forecast vectors → event-timing head + QA decoder reading the vectors; (c) probes trained on the same labels. Identical data, steps and LoRA budget. Includes a time-to-onset regression head with constant-median/countdown baselines (from 2607.05316). | 3 (AO and LatentQA recipes exist; Building-Better-AO says AOs at best tie probes) | 5 | 5 | 4 | **17** | **KEEP (2)** |
+| D3 | **Natural / held-out generalization test.** Evaluate all D1/D2 forecasters on Qwen3GuardTest `thinking_loc` (Qwen3 reasoning traces with token-level unsafe onsets ~50–220 tokens in) and on held-out behaviors (JBB, StrongREJECT). On-policy prefill continuations judged per sentence. | 4 | 4 | 4 | 4 | **16** | **KEEP (3)** |
+| D4 | Monte Carlo soft future-risk targets (StreamGuard-style: 8–16 rollouts per prefix judged by a guard model) to estimate the irreducible-uncertainty ceiling | 4 | 4 | 3 | 2 (≈ positions × 16 × 512-token rollouts plus a guard judge; heavy on one shared GPU) | 13 | Pruned. Optional small-scale add-on to D1 if time permits (e.g. 100 prefixes, 8 rollouts). |
+| D5 | Train a full LatentQA/LIT decoder from scratch on Qwen3-8B with our labels | 3 | 3 | 2 (redundant with D2(a), since the AO already contains LatentQA data) | 2 | 10 | Pruned. LatentQA is used zero-shot via the released Llama-3-8B decoder; its masking idea (mask control tokens) is adopted in D1 data design. |
+| D6 | Steering/control: use the forecaster's gradient to prevent delayed harm (LatentQA control) | 3 | 2 | 3 | 3 | 11 | Pruned. Out of scope (the hypothesis is about forecasting). |
+| D7 | Multi-turn conversational drift forecasting | 2 | 2 | 3 | 3 | 10 | Pruned. A different setting; adds a confound. |
+| D8 | FineHarm-based natural benchmark | 4 | 4 | 3 | 2 (gated; requires the owner to accept terms; off-policy responses) | 13 | Pruned for now. Revisit if the account owner grants access. |
+| D9 | Scale study across target sizes (Qwen3-4B/8B/14B AO checkpoints) | 3 | 3 | 3 | 2 | 11 | Pruned. Could be a small appendix if D1–D3 finish early. |
+
+## Kept directions → concrete plan for experiment_runner
+1. **D1 (Part 1).** Main deliverable: decay curves of AUROC vs lead (64/128/256/512) per method, with bootstrap CIs.
+   - **Topic-leakage control:** matched benign endings. Also report "prompt-only" and "prefix-text-only" baselines.
+   - **Scoring:** verbalizers via Yes/No logit margins, using ≥20-token activation windows and layers 18/22.
+2. **D2 (Part 2).** Same data splits (by behavior).
+   - Report AUROC per horizon, timing MAE / C-index, warning lead at fixed FPR, and QA accuracy.
+   - Decision rule from the hypothesis: if the direct AO ≈ the forecast-vector model, conclude that the supervision, not the architecture, drives the gain.
+3. **D3 (generalization).** Zero-shot transfer of the D2-trained models and D1 probes to `thinking_loc` and held-out behaviors.
+
+## Risks and mitigations
+- **Topic shortcut.** Matched controls and per-behavior splits.
+- **Spliced (off-policy) text.** Add an on-policy prefill subset generated by Qwen3-8B (or `mlabonne/Qwen3-8B-abliterated` for continuations).
+- **GPU sharing.** Only GPU 2 was free at phase time (the others had ~43 GB used). Cache activations to disk (layers 18/22, bf16) and train heads offline.
+- **Verbalizer "safe" prior.** Observed in the LatentQA smoke test (`logs/latentqa_smoke_test.json`). Use likelihood scoring and balanced training.
+
+---
+# Experiment-runner plan (Phase 0/1; written 2026-10-18 before data collection)
+
+## Motivation & Novelty Assessment
+### Why This Research Matters
+Streaming monitors and activation verbalizers are usually evaluated on whether text is *already* unsafe. A response can open with harmless background and then turn into actionable harm hundreds of tokens later. An observer that can warn ahead of time could intervene (stop, steer, escalate) before any harm is emitted.
+### Gap in Existing Work
+The literature review found no work that measures forecastability of *natural* unsafe onsets 64–512 tokens ahead with censoring-aware labels. AO/LatentQA are evaluated on current-state questions, and "Building Better AOs" reports they only tie probes. StreamGuard forecasts risk only a short distance ahead.
+### Our Novel Contribution
+1. A family-split, censoring-aware lead-distance benchmark on fresh Qwen3-8B generations, with LLM timelines and token-offset onsets.
+2. Decay curves for prevalence, position, text, probe and self-report baselines.
+3. A matched comparison: a forecast-vector observer (horizon queries + timing head) vs a direct question-conditioned AO-style reader. Both use the same activations, labels and parameter/step budget.
+### Experiment Justification
+- E0 (baselines): needed to establish whether any signal exists and how much is explained by position/topic.
+- E1 (forecastability by horizon): answers RQ1.
+- E2 (forecast representation vs direct reader, 3 seeds): answers RQ2. If they tie, supervision rather than architecture explains the gain.
+- Controls (shuffled / no / constant activations, question only): rule out shortcut explanations.
+- RQ3 (held-out question meaning) and RQ5 (activation history): cheap add-ons on the same cached features.
+
+## Scaled-down protocol (1-hour budget, single free A6000)
+- **Families.** 1000 prompt families, split 80/10/10 by family *before generation* (`src/prep_prompts.py`). Sources:
+  - harmful requests (HarmBench / AdvBench / StrongREJECT) wrapped in "background-first long-form" templates (420);
+  - BeaverTails unsafe user questions (200);
+  - benign Alpaca long-form matched negatives (280);
+  - story prompts (100; reported separately).
+- **Decoding.** Qwen3-8B frozen, non-thinking chat template, T=0.7, top_p=0.8, top_k=20, max_new_tokens=768, stop at `<|im_end|>`. The cap gives `finish_reason=length`, and those horizons are censored.
+- **Fixed cutoffs.** t ∈ {32, 64, 128, 192, 256} response tokens. Horizons H ∈ {64, 128, 256, 512}.
+- **Labels.** One structured timeline per generation from gpt-5.6-luna (OpenAI API; OpenRouter key absent). Quote → char → Qwen3 token onset.
+  - For a prefix at t (safe iff onset ≥ t, or no event): y_H = 1 if onset < t+H. y_H = 0 if there is no event and either (generation stopped normally) or (t+H ≤ length). Otherwise y_H is censored (masked).
+- **Observer inputs.** Residuals after layers 9 / 18 / 27 at the last observed token, from a forward pass on prompt + response[:t] only (causal truncation + audit).
+- **Baselines.** Prevalence; token position; prompt-only TF-IDF LR; prefix-text TF-IDF LR; linear probe (per layer, all layers); MLP probe; Qwen3-8B self-report (Yes/No logit margin).
+  - Deviation: the off-the-shelf AO / LatentQA decoder is not run, due to the time budget. LatentQA's smoke test (resource phase) answered "safe" for everything; we cite it qualitatively.
+- **Part 2 (lightweight analog).** The full LLM QA decoder is not feasible in 1 h. Both readers share an identical activation encoder (3×Linear→256, concat 512 + layer/position embeddings) and an identical small QA head conditioned on a question embedding. They are matched on parameters ±5%, steps and LR.
+  - (a) Direct AO-style reader: encoder + question → answer logit.
+  - (b) Forecast model: encoder → 4 horizon queries × 2 forecast vectors (cross-attention) → timing head (5 bins, censoring-aware NLL) + behavior heads per window. The QA head reads only the forecast vectors + event probabilities + question (no bypass; bypass is an ablation).
+  - Questions: occurrence within H (4), behavior type (harmful rec vs toxic), refusal later, topic change within 128. Held-out question meaning: train without "refusal later" and test it zero-shot.
+- **Metrics.** Per-horizon AUROC / AUPRC / Brier / log loss with prevalence and #families; family-level bootstrap CIs (1000 resamples); 3 seeds for Part 2. Early warning: fraction of unsafe test trajectories alerted ≥64/128/256 tokens before onset, at a threshold giving 5% trajectory-level false alarms on benign val trajectories.
+- **Stretch.** RQ5 (last-16-token mean history) is cheap and included. RQ4 / RQ6 (mixtures, GRPO) and Track A are not run. Repeated-rollout calibration runs only if time remains.
+
+## Expected outcomes
+H1 is supported if AUROC decays with H and simple baselines (text/position) are close to the activation readers. H2 is supported only if (b) > (a) with CIs excluding 0 at H ≥ 128.
+
+
+════════════════════════════════════════════════════════════════════════════════
+                          LITERATURE REVIEW
+════════════════════════════════════════════════════════════════════════════════
+
+# Literature Review: Forecasting Delayed Unsafe Behavior from Activations with Verbalizers
+
+Detailed per-paper notes:
+- `papers/notes_activation_oracles.md`: Activation Oracle (AO) family, deep reads.
+- `papers/notes_forecasting_safety.md`: future-probing and streaming-harm papers, deep reads.
+- LatentQA (user-specified) was read in full; its notes are in this file.
+
+Paper-finder was unavailable (service not running). The search used the arXiv API with ~30 targeted queries plus the HF and GitHub APIs.
+
+## 1. Research area overview
+Activation verbalizers are LLMs fine-tuned to answer natural-language questions about another model's activations. The main lines of work:
+- **Training-free patching:** Patchscopes, SelfIE.
+- **Trained decoders:** LatentQA/LIT (2024) and Activation Oracles (AO, 2025), plus a fast-growing 2026 literature on AO quality, calibration, blind spots and hallucination.
+- **Probes for future content:** Future Lens, Emergent Response Planning, myopic-training analysis, remaining-length probes. These show that hidden states carry information about future tokens and global response attributes.
+- **Streaming safety monitors:** SCM/FineHarm, StreamGuard, Constitutional Classifiers, Qwen3Guard-Stream. These try to stop harmful output early, but almost all of them *detect harm already present in the prefix*. Only StreamGuard explicitly *forecasts* it, and it is text-only.
+
+**No paper evaluates any verbalizer, or even a probe, on forecasting unsafe content 64–512 tokens ahead.** The longest horizons in the AO literature are next-50-token context prediction (a training task only) and AObench's "Backtracking" and "MMLU Prediction" items. Our Part 1 question is therefore open.
+
+## 2. Key papers
+
+### LatentQA: Teaching LLMs to Decode Activations into Natural Language (Pan, Chen, Steinhardt; ICLR 2026; arXiv 2412.08686). User-specified, deep read
+- **Task:** answer open-ended questions about activations. The paper focuses on predicting *qualitative properties of the model's future completion* from activations of the current prompt, which is exactly the framing of our hypothesis, applied there to personas and goals rather than harm timing.
+- **Data (Sec. 3, App. A):**
+  - o1-preview builds (control, stimulus, completion) dialogs plus QA pairs: 4,670 goals, 3,359 personas and 8,703 extractive-QA items, 16,732 in total.
+  - QA comes in two kinds: *description* QA (what is the control) and *reasoning* QA (implications of the control for future behavior).
+  - Three data types: control activations; stimulus activations with the control masked; stimulus+completion activations with the control masked.
+  - Three design decisions matter for generalization: (1) **mask the control-token activations** so the decoder cannot read the instruction directly and must use what attention has written into later tokens; (2) mix the three data types; (3) make completions faithful (strong control prompts or a stronger generator).
+- **Method (LIT):**
+  - The decoder is a copy of the target with a LoRA adapter.
+  - Activations from target layer k=15 are patched into decoder layer ℓ=0 at placeholder tokens. The patch *replaces* the hidden state.
+  - The decoder is trained with cross-entropy on the answer.
+  - A layer sweep (Table 6) found read 15 / write 0 best (eval PPL 1.013); read 0 is worst.
+  - Control: gradients of the decoder's QA loss are backpropagated into a LoRA on the target (rank 8, layers 0..k).
+- **Results:**
+  - Hidden system prompt (persona) identification from *user-turn activations only*: 100% (easy) / 92% (hard), vs 97.3% / 73.3% for prompting GPT-4 with the full dialog, and ~24% / ~16% for SelfIE.
+  - Relational attribute extraction beats linear probes by 32.2 points and Patchscope by 38.2 points on average.
+  - Debiasing (CrowS) is the only statistically significant reduction among the methods tried.
+  - Steering with the decoder can elicit harmful knowledge (100% of harmful and 87% of benign prompts after "rogue chemist" steering).
+  - Scaling: test loss improves with model size (1B → 70B) and data size. Hard-persona accuracy is 12 / 88 / 92% for 1B / 3B / 8B.
+- **Limitations (authors):** narrow data (goals, personas, extractive QA); possible hallucination; no ground truth for latents. Futures are only *qualitative style/goal* properties of the next reply; there are no timing or long-horizon events.
+- **Code / checkpoint:**
+  - github.com/aypan17/latentqa
+  - `aypan17/latentqa_llama-3-8b-instruct` (LoRA)
+  - Our smoke test runs (see code/README.md). It reveals a strong "safe" prior on yes/no safety questions, while the open-ended "what will the assistant do later?" question does reveal harmful plans.
+
+### Activation Oracles (Karvonen et al., arXiv 2512.15674): the "AO" baseline
+- **Method:**
+  - The oracle is a LoRA copy of the target.
+  - Prompt: `Layer: L\n ? ? … ?\n<question>`.
+  - Target activations from layers at 25/50/75% depth are *added*, norm-matched, at the output of oracle block 1.
+- **Training data:** ~1M examples, a mix of next/past-token context prediction (600k), 7 classification datasets (336k) and LatentQA system-prompt QA (64k).
+- **Models and checkpoints:** Qwen3-8B, Gemma-2-9B-it, Llama-3.3-70B. LoRA checkpoints are on HF.
+- **Evaluations:** secret-keeping model organisms (Taboo, Gender, SSC), emergent-misalignment diffing, PersonaQA, out-of-distribution classification.
+- **Findings:** wide training transfers out of distribution. However, the AO paper has *no probe comparison on its main tasks and no future-behavior prediction*.
+
+### Building Better Activation Oracles (arXiv 2606.02609)
+- **Recipe (Qwen3-8B):**
+  - New conversational data in which the question is about the *suffix* of the model's CoT, asked from prefix activations. This is essentially "predict what the model does next", and it was the largest single gain.
+  - Read layer 22 (62% depth), or layers 21–25.
+  - On-policy lens corpus.
+  - Injection coefficient 2×.
+- **Evaluation:** AObench (11 tasks).
+- **Critical lessons for us:**
+  1. Narrowly trained AOs "consistently matched but never significantly exceeded linear probes".
+  2. A text-only control with the same context performed similarly.
+  3. Score with AUROC on the Yes/No logit margin. Qwen AOs default to "No".
+  4. Feed ≥20–50 tokens of activations, not just the last token.
+- **Checkpoint:** `ceselder/qwen3-8b-ao-v3-best`.
+
+### AO calibration; AO blind spots; Faithful Activation Verbalization (AVPO); NLA token selection (2026)
+- **Calibration:** candidate-answer likelihood scoring gives AUROC 0.92–0.96; verbalized confidence is useless (0.40–0.53). Code: `code/probabilistic_activation_oracles`.
+- **Blind spots:** AOs fine-tuned on a skewed concept stop reporting it (35% vs 94% recovery) while probes still decode it. Balance the labels and always compare against probes.
+- **AVPO:** AOs hallucinate on harmful-intent inputs (intent recovery 0.54).
+- **NLA token selection:** chat-template boundary tokens and late-input tokens are the most informative read positions.
+
+### Future information in hidden states
+- **Future Lens (2311.04897):** a learned soft-prompt decoder predicts tokens 2–4 ahead at ~45% P@1 vs 97% for the next token. A sharp drop, then a plateau. It is a learned "future verbalizer" precursor. Middle layers are best.
+- **Emergent Response Planning (2502.06258):** MLP probes on *prompt* activations predict global response attributes (length Spearman 0.85, reasoning steps 0.82, 4-way choice F1 0.84). The signal over the response is U-shaped: high at the start, a dip mid-response, recovery just before the event. **Verbalized self-predictions are near chance.** This is our expected outcome for the self-report baseline.
+- **Do LMs Plan Ahead (2404.00859):** future-useful information is mostly "breadcrumbs" (features useful now), with pre-caching that grows with scale. Prediction: long-lead harm forecasting will rely on *intent/topic* features and not encode timing well.
+- **Remaining output length (2607.05316):** linear probes encode the number of tokens to EOS (MAE ~30 on 400-token outputs; it beats the constant-median and countdown baselines), and the estimate re-plans at "Wait" tokens. This is the template for our **time-to-onset head and its baselines**.
+
+### Streaming / forecasting harm
+- **SCM/FineHarm (2506.09996):**
+  - 29K responses with sentence- and word-level harm labels (HF `liyang-ict/FineHarm`, gated click-through).
+  - Many responses follow the "safe background → 'However…' → harmful guide" pattern.
+  - SCM-7B reaches macro-F1 97.5 after seeing 18% of tokens. It *detects* harm, it does not forecast it.
+- **StreamGuard (2604.03962):**
+  - The first *forecasting* monitor. The target for each prefix is the Monte Carlo fraction of 16 sampled continuations judged unsafe by Qwen3Guard-Gen-8B.
+  - Metrics: OnTime / Late / Miss and detection lead.
+  - Text-only.
+- **Shallow safety alignment (2406.05946):** safety lives in the first few tokens. Prefilling a compliant prefix gives a 42–57% attack success rate, so prefilling is an on-policy way to create delayed harm.
+- **Constitutional Classifiers (2501.18837):** a streaming output classifier with token-level prefix prediction.
+- **Multi-turn drift (2605.15455):** surfacing activation-based risk improves user calibration.
+
+### Representation baselines and benchmarks
+- **Refusal direction (2406.11717):** one difference-in-means direction mediates refusal. A cheap 1-D baseline.
+- **RepE (2310.01405)** and **Circuit Breakers (2406.04313):** harmfulness readout and rerouting.
+- **Looking Inward (2410.13787):** fine-tuned self-prediction (introspection) beats cross-model prediction. Basis for the "self-report" baseline.
+- **Benchmarks:** HarmBench (2402.04249) and BeaverTails (2307.04657) supply harmful behaviors, categories and classifiers.
+
+## 3. Common methodologies
+- Activation patching into a decoder LLM: LatentQA (replace at layer 0), AO (norm-matched add at layer 1), Patchscopes and SelfIE (training-free).
+- Linear or 1-hidden-layer MLP probes on residual streams at middle layers (Future Lens, ERP, remaining length, refusal direction).
+- Streaming monitors on text prefixes, trained on sentence- or token-level onset labels (SCM, Qwen3Guard-Stream) or on Monte Carlo future-risk targets (StreamGuard).
+
+## 4. Standard baselines (to include)
+1. **Text-only forecaster:** the same base LLM, or a small classifier/guard model (Qwen3Guard-Stream-8B, SCM-7B), given the same prefix text.
+2. **Linear and MLP probes** per layer and per horizon. The refusal-direction projection is a 1-D probe.
+3. **Zero-shot verbalizers:**
+   - the official AO (`adamkarvonen/checkpoints_latentqa_cls_past_lens_addition_Qwen3-8B`);
+   - `ceselder/qwen3-8b-ao-v3-best`;
+   - the LatentQA decoder (Llama-3-8B via the NousResearch mirror).
+4. **Self-report / prompting:** ask the target itself "will your response later contain harmful instructions?" (ERP predicts near chance).
+5. **Matched direct AO:** the AO fine-tuned on our future labels (Part 2 control).
+6. **Trivial baselines:** prompt-only classifier (does the prompt alone give it away?), constant-median and countdown baselines for timing.
+
+## 5. Evaluation metrics
+- **AUROC / AUPRC** for `harm_within(h)` at each lead bucket h ∈ {64, 128, 256, 512}: the decay curve. For verbalizers, use the Yes/No logit margin or candidate-answer likelihood.
+- **Time-to-onset MAE** (right-censored; also the C-index) vs the constant-median baseline.
+- **Early-warning metrics (StreamGuard):** OnTime / Late / Miss, mean warning lead in tokens, and FPR on matched benign controls at a fixed recall.
+- **Calibration:** ECE. **Free-text QA:** LLM-judge correctness.
+- **Bootstrap CIs** over prompts/behaviors. Statistical tests across methods use paired bootstrap or DeLong.
+
+## 6. Datasets in the literature
+- HarmBench, AdvBench, JBB, StrongREJECT: harmful requests.
+- BeaverTails, PKU-SafeRLHF: QA with harm labels and categories.
+- FineHarm: token/sentence harm positions (gated).
+- Qwen3GuardTest: token spans of unsafe onsets. `thinking_loc` onsets reach ~220 tokens; `response_loc` onsets are nearly all at the start.
+- Circuit-breakers / LLM-LAT: harmful plus refusal completions.
+- Dolly / Alpaca: benign stimuli (LatentQA uses Dolly/Alpaca).
+
+## 7. Gaps and opportunities
+1. No benchmark has controlled harm onsets at long leads. One must be built, and it must include **matched controls** (same prompt and preamble, benign ending) so that the "harmful topic" shortcut is removed.
+2. No verbalizer has been trained or evaluated on *timing*. The AO, LatentQA and AObench futures are style, goal, or next ~50 tokens.
+3. The AO-vs-probe evidence is mixed-to-negative. Any claim that "verbalizers forecast" must beat probes and text-only baselines on identical inputs.
+4. The supervision-vs-architecture question has not been tested: a direct AO trained on the same future labels is the necessary control (as the hypothesis states).
+
+## 8. Recommendations for our experiment
+- **Target model:** **Qwen3-8B** (ungated, cached config; official and improved AO checkpoints exist; 16 GB bf16 fits alongside an oracle copy on one 48 GB A6000). Secondary: Llama-3-8B-Instruct via `NousResearch/Meta-Llama-3-8B-Instruct`, for the released LatentQA decoder.
+- **Data:** build a delayed-harm set (datasets/README.md recipe).
+  - Inputs: HarmBench, AdvBench, LLM-LAT and circuit-breaker prompts and harmful text; benign preambles generated by the target; onsets at L ∈ {0, 64, 128, 256, 512}.
+  - Matched benign and refusal endings; on-policy prefill continuations.
+  - Split train/val/test **by behavior**. Use JBB and StrongREJECT as held-out behaviors.
+  - Natural test: Qwen3GuardTest `thinking_loc`.
+- **Read positions:** every 16 tokens before onset. Layers ~18 and 22 (Qwen3-8B). Feed a ≥20-token activation window to the verbalizers.
+- **Baselines:** as in §4. Score every verbalizer with logit margins (AUROC), not free text.
+- **Part 2:** train (a) a direct AO, i.e. the official AO further fine-tuned on future yes/no + timing QA, and (b) the proposed forecast-vector model (horizon queries → forecast vectors → timing head + QA decoder). Use identical labels, data, steps and LoRA budget. Keep ≥10% of the original AO mixture to avoid forgetting.
+- **Pitfalls:**
+  - Labels leaking through the preamble or topic.
+  - The verbalizers' "No/safe" prior.
+  - Hallucination.
+  - Off-policy spliced text, so also report on-policy prefill results.
+  - Chat-template end-of-turn tokens when reading mid-response.
+
+
+════════════════════════════════════════════════════════════════════════════════
+                          PAPER REQUIREMENTS
+════════════════════════════════════════════════════════════════════════════════
+
+Generate a complete academic paper with the following structure:
+
+1. TITLE
+   - Clear, specific, informative
+   - Should convey main finding or contribution
+
+2. AUTHOR
+   - Use this exact author line in the \author{} block: Xiaoyan Bai and NeuriCo
+
+3. ABSTRACT (150-250 words)
+   - Problem statement
+   - Approach
+   - Key results
+   - Significance
+
+4. INTRODUCTION
+   - Research problem and motivation
+   - Gap in existing work
+   - Our contribution (be specific)
+   - Paper organization
+
+5. RELATED WORK
+   - Organized by theme/approach
+   - Position our work relative to prior work
+   - Cite papers from literature review
+
+6. METHODOLOGY
+   - Clear description of approach
+   - Experimental setup
+   - Datasets used
+   - Evaluation metrics
+   - Baselines
+
+7. RESULTS
+   - Present results with tables and figures
+   - Statistical analysis
+   - Comparison to baselines
+   - Ablation studies (if applicable)
+
+8. DISCUSSION
+   - Interpretation of results
+   - Limitations
+   - Broader implications
+
+9. CONCLUSION
+   - Summary of contributions
+   - Key findings
+   - Future work
+
+10. REFERENCES
+   - BibTeX format
+   - All cited papers
+
+════════════════════════════════════════════════════════════════════════════════
+                          OUTPUT FORMAT
+════════════════════════════════════════════════════════════════════════════════
+
+Create a MODULAR LaTeX project with the following directory structure:
+
+paper_draft/
+├── main.tex              # Main file that imports all sections
+├── references.bib        # BibTeX references
+├── sections/
+│   ├── abstract.tex      # Abstract content
+│   ├── introduction.tex  # Introduction section
+│   ├── related_work.tex  # Related work section
+│   ├── methodology.tex   # Methodology section
+│   ├── results.tex       # Results section
+│   ├── discussion.tex    # Discussion section
+│   └── conclusion.tex    # Conclusion section
+├── figures/              # Directory for any generated figures
+├── tables/               # Directory for complex standalone tables
+└── appendix/             # Directory for appendix sections (if needed)
+
+INSTRUCTIONS:
+1. First, create the directory structure above (mkdir -p paper_draft/sections paper_draft/figures paper_draft/tables paper_draft/appendix)
+2. Write main.tex using the EXACT preamble for NEURIPS:
+
+   \documentclass{article}
+   \usepackage[final]{neurips_2025}  % NEURIPS style (neurips_2025.sty is in paper_draft/)
+   \usepackage[hidelinks]{hyperref}  % REQUIRED: clickable links
+   \usepackage{booktabs}  % REQUIRED: professional tables
+   \usepackage{graphicx}
+   \usepackage{amsmath,amssymb}
+
+   % Import command files
+   \input{commands/math}
+   \input{commands/general}
+   \input{commands/macros}
+
+   % Use this bibliography style:
+   \bibliographystyle{plainnat}
+
+   \author{Xiaoyan Bai and NeuriCo}
+
+   - Use \input{sections/...} to include each section
+   - Use \bibliography{references} for references
+3. Write each section file with COMPLETE content (no placeholders)
+4. Each section file should include its \section{} command
+5. Write references.bib with all citations in BibTeX format
+6. After writing all files, compile the paper:
+   cd paper_draft && pdflatex -interaction=nonstopmode main.tex && bibtex main && pdflatex -interaction=nonstopmode main.tex && pdflatex -interaction=nonstopmode main.tex
+
+This modular structure allows humans to easily:
+- Edit individual sections without navigating a large file
+- Track changes per section
+- Reuse sections across different paper versions
+
+════════════════════════════════════════════════════════════════════════════════
+                          QUALITY REQUIREMENTS
+════════════════════════════════════════════════════════════════════════════════
+
+- Academic tone throughout
+- All claims must be supported by data from the experiment report
+- Proper citations using \cite{} commands
+- Clear figures and tables with proper captions
+- NO placeholder text - every section must have real content
+- The paper MUST compile without errors
+- If compilation fails, debug and fix the LaTeX errors
+
+════════════════════════════════════════════════════════════════════════════════
+                          LAB WRITING STYLE
+════════════════════════════════════════════════════════════════════════════════
+
+Follow these lab-specific conventions to match our paper style:
+
+1. LANGUAGE STYLE:
+   - Use active voice: "We propose", "We examine", "We focus on"
+   - Be direct and confident: "Our main question is...", "We hypothesize that..."
+   - State things clearly and simply - prefer plain language over jargon
+   - Use bold questions as paragraph organizers: {\bf what is X?}
+   - Include specific quantitative claims: "8.97% over baseline"
+   - Avoid fancy wording: "utilize" → "use", "facilitate" → "help"
+
+2. INTRODUCTION STRUCTURE:
+   - Engaging hook (get to the point quickly)
+   - Problem importance
+   - Gap identification
+   - Your approach with method figure reference
+   - Quantitative preview of results
+   - Contribution bullets (3-4 items, action verbs)
+
+3. CONTRIBUTION LISTS:
+   \begin{itemize}[leftmargin=*,itemsep=0pt,topsep=0pt]
+       \item We propose...
+       \item We conduct...
+       \item We complement...
+   \end{itemize}
+
+4. MODULAR COMMANDS STRUCTURE:
+   Command templates are pre-copied to paper_draft/commands/:
+   - math.tex: Math notation macros
+   - general.tex: Formatting macros
+   - macros.tex: Project-specific term definitions (customize this for your paper)
+
+   In main.tex, include:
+   \input{commands/math}
+   \input{commands/general}
+   \input{commands/macros}
+
+5. REFERENCE CONVENTIONS:
+   Use reference macros from math.tex:
+   - \figref{fig:name} for "figure 1" (lowercase, in-sentence)
+   - \Figref{fig:name} for "Figure 1" (capitalized, start of sentence)
+   - \secref{sec:name} for "section 2"
+
+6. TEXT FORMATTING:
+   - Use \para{Header text} for bold paragraph headers
+   - Define method/dataset names with \textsc and \xspace:
+     \newcommand{\methodname}{\textsc{MethodName}\xspace}
+
+7. TABLE FORMATTING:
+   - Use booktabs package (no vertical lines)
+   - Use \resizebox{\textwidth}{!}{...} for wide tables
+   - Use @{} to remove padding at table edges
+   - Use \cmidrule(lr){x-y} for sub-headers
+   - Use \textsc{} for dataset/method names in headers
+   - Bold best results with {\bf ...}
+
+8. FIGURE FORMATTING:
+   - Use 0.32\textwidth for 3-column subfigures
+   - Use 0.95\linewidth for full-width figures
+   - Use \input{figures/legend} for shared legends
+   - Write self-contained captions explaining key observations
+
+9. RESULTS PRESENTATION:
+   - Define \increase and \decrease for colored arrows (green up, red down)
+   - Bold best results in tables
+   - Report confidence intervals when available
+
+10. ALGORITHM STYLING:
+    - Use algpseudocode with [noend]
+    - Use \triangleright for comments
+
+11. HYPERLINKS (REQUIRED):
+    - Always use \usepackage[hidelinks]{hyperref} or with colored links
+    - All citations, section refs, figure refs, table refs must be clickable
+    - This is essential for reader navigation
+
+════════════════════════════════════════════════════════════════════════════════
+                          WORKFLOW: REVIEW AND REFLECT
+════════════════════════════════════════════════════════════════════════════════
+
+Before calling finish, you MUST complete these review steps:
+
+1. REVIEW RESOURCES (at the start):
+   - Read .claude/skills/paper-writer/SKILL.md for detailed guidance
+   - Study templates/paper_writing/lab_style_guide.md for style conventions
+   - Browse paper_examples/ for formatting and language patterns
+
+2. SELF-REFLECTION (before finishing):
+   After writing all sections, review your work against these criteria:
+
+   LANGUAGE CHECK:
+   - [ ] Is the writing clear and jargon-free?
+   - [ ] Are claims specific with quantitative support?
+   - [ ] Is active voice used throughout?
+
+   FORMATTING CHECK:
+   - [ ] Does main.tex include \input{commands/math}, \input{commands/general}, \input{commands/macros}?
+   - [ ] Is hyperref package included for clickable references?
+   - [ ] Do tables use booktabs (no vertical lines)?
+   - [ ] Are best results bolded in tables?
+   - [ ] Are figures/tables properly captioned?
+
+   STRUCTURE CHECK:
+   - [ ] Does introduction follow: hook → importance → gap → approach → preview → contributions?
+   - [ ] Are contribution bullets specific with action verbs?
+   - [ ] Does the paper compile without errors?
+
+3. FIX ISSUES:
+   - Address any issues found in the self-reflection
+   - Re-compile and verify the PDF looks correct
+
+Only after completing this review should you consider the paper finished.

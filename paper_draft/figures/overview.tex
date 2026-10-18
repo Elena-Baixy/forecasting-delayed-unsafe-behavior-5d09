@@ -1,0 +1,49 @@
+\begin{figure}[t]
+\centering
+\resizebox{0.97\linewidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  box/.style={draw, rounded corners=2pt, align=center, inner sep=3pt, minimum height=0.8cm},
+  arr/.style={-{Stealth[length=2mm]}, thick}
+]
+% ---------------- timeline ----------------
+\node[anchor=west, font=\small\bfseries] at (0,2.95) {(a) Labels from a single \qwen trajectory};
+\fill[green!18] (0,1.5) rectangle (3.0,2.1);
+\fill[gray!12] (3.0,1.5) rectangle (7.2,2.1);
+\fill[red!25] (7.2,1.5) rectangle (12.0,2.1);
+\draw (0,1.5) rectangle (12.0,2.1);
+\node at (1.5,1.8) {safe prefix $x_{\le t}$};
+\node at (5.1,1.8) {harmless background};
+\node at (9.6,1.8) {actionable harm};
+\draw[very thick, blue!70!black] (3.0,1.35) -- (3.0,2.25);
+\node[blue!70!black, above] at (3.0,2.25) {cutoff $t$};
+\draw[very thick, red!70!black] (7.2,1.35) -- (7.2,2.25);
+\node[red!70!black, above] at (7.2,2.25) {onset $\onset$};
+% horizon brackets
+\foreach \h/\x/\lab/\y in {64/4.0/{$y_{64}{=}0$}/1.0, 128/5.0/{$y_{128}{=}0$}/0.65, 256/7.0/{$y_{256}{=}0$}/0.3, 512/11.0/{$y_{512}{=}1$}/-0.05}{
+  \draw[|-|] (3.0,\y) -- (\x,\y);
+  \node[anchor=west, font=\scriptsize] at (\x+0.05,\y) {\lab};
+}
+\node[anchor=west, font=\scriptsize, align=left] at (12.2,1.8) {$y_H{=}1$ iff\\$\onset < t{+}H$};
+% ---------------- observers ----------------
+\node[anchor=west, font=\small\bfseries] at (0,-0.55) {(b) Observers read frozen activations of $x_{\le t}$ only};
+\node[box, fill=gray!8] (acts) at (1.4,-2.35) {residuals\\L9 / L18 / L27};
+\node[box, fill=yellow!15] (probe) at (5.0,-1.6) {linear probe\\(+16-token history)};
+\node[box, fill=orange!15] (ao) at (5.0,-2.6) {off-the-shelf AO\\``harmful later?''};
+\node[box, fill=blue!10] (direct) at (5.0,-3.65) {\direct reader\\encoder $\to$ memory slots};
+\node[box, fill=purple!12] (fc) at (9.3,-3.15) {\forecast reader\\4 horizon queries $\to$\\forecast vectors $\to$ timing head};
+\node[box, fill=white] (qa) at (9.3,-4.35) {shared QA head\\(question embedding)};
+\node[box, fill=green!10] (out) at (13.0,-2.35) {$\hat p(\onset<t{+}H)$\\early-warning alert};
+\draw[arr] (acts) -- (probe);
+\draw[arr] (acts) -- (ao);
+\draw[arr] (acts.south) |- (direct.west);
+\draw[arr] (direct.east) -- ++(0.5,0) |- (qa.west);
+\draw[arr] (direct.east) -- ++(0.5,0) |- (fc.west);
+\draw[arr] (fc) -- (qa);
+\draw[arr] (probe.east) -- (out.west);
+\draw[arr] (ao.east) -- (out.west);
+\draw[arr] (qa.east) -| (out.south);
+\end{tikzpicture}}
+\caption{{\bf Task and observers.} (a) From one \qwen generation we take still-safe prefixes at fixed cutoffs $t\in\{32,\dots,256\}$. The binary label $y_H$ says whether the first clear violation (onset $\onset$, located by an LLM annotator) falls within the next $H$ tokens. (b) All observers see only activations of the truncated text. The \direct and \forecast readers share the same encoder, QA head, labels, and training budget. The \forecast reader must pass all information through horizon-specific forecast vectors and a censoring-aware timing head.}
+\label{fig:overview}
+\end{figure}

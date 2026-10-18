@@ -1,0 +1,34 @@
+\begin{table}[t]
+\centering
+\caption{{\bf Forecasting the first unsafe onset within $H$ tokens} (assistant setting, safe prefixes only, 5-fold family CV, $n{=}3{,}520$ prefixes from 880 families). Cells give \auroc with 95\% family-bootstrap CIs. Trained readers give mean$\pm$sd over 3 seeds. \auprc and Brier are at $H{=}512$ (prevalence 10.7\%). Best in {\bf bold}. $^*$Out-of-fold constant predictions; values below 0.5 are a fold-composition artifact, not a signal.}
+\label{tab:main}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}llcccccc@{}}
+\toprule
+& & \multicolumn{4}{c}{\auroc at horizon $H$} & \multicolumn{2}{c}{$H{=}512$} \\
+\cmidrule(lr){3-6} \cmidrule(lr){7-8}
+& \textsc{Method} & $64$ & $128$ & $256$ & $512$ & \auprc$\uparrow$ & Brier$\downarrow$ \\
+\midrule
+\multirow{4}{*}{\rotatebox{90}{\scriptsize Baselines}}
+& Prevalence$^*$ & 0.33 & 0.39 & 0.46 & 0.46 & 0.10 & 0.096 \\
+& Token position & 0.41 {\scriptsize[.27,.56]} & 0.60 {\scriptsize[.49,.72]} & 0.64 {\scriptsize[.58,.70]} & 0.55 {\scriptsize[.52,.57]} & 0.12 & 0.095 \\
+& \textprompt (prompt only) & 0.69 {\scriptsize[.55,.80]} & 0.72 {\scriptsize[.65,.79]} & 0.76 {\scriptsize[.70,.81]} & 0.77 {\scriptsize[.72,.81]} & 0.28 & 0.087 \\
+& \textprefix (prompt+prefix) & 0.63 {\scriptsize[.47,.77]} & 0.76 {\scriptsize[.67,.84]} & 0.83 {\scriptsize[.78,.88]} & 0.85 {\scriptsize[.82,.89]} & 0.45 & 0.080 \\
+\midrule
+\multirow{4}{*}{\rotatebox{90}{\scriptsize Probes}}
+& Linear probe L18 & 0.71 {\scriptsize[.60,.80]} & 0.78 {\scriptsize[.71,.85]} & 0.82 {\scriptsize[.78,.86]} & 0.87 {\scriptsize[.85,.89]} & 0.44 & 0.075 \\
+& Linear probe L9+18+27 & 0.74 {\scriptsize[.63,.83]} & 0.78 {\scriptsize[.71,.85]} & 0.83 {\scriptsize[.79,.87]} & 0.87 {\scriptsize[.85,.89]} & 0.46 & 0.075 \\
+& MLP probe L9+18+27 & 0.72 {\scriptsize[.62,.81]} & 0.76 {\scriptsize[.69,.83]} & 0.80 {\scriptsize[.76,.83]} & 0.84 {\scriptsize[.81,.87]} & 0.39 & 0.104 \\
+& \histprobe (L18 + 16-token mean) & {\bf 0.79} {\scriptsize[.71,.87]} & {\bf 0.82} {\scriptsize[.75,.89]} & {\bf 0.86} {\scriptsize[.82,.90]} & {\bf 0.90} {\scriptsize[.88,.92]} & {\bf 0.50} & {\bf 0.071} \\
+\midrule
+\multirow{3}{*}{\rotatebox{90}{\scriptsize Verbal.}}
+& \selfreport (\qwen) & 0.74 {\scriptsize[.66,.82]} & 0.80 {\scriptsize[.75,.85]} & 0.83 {\scriptsize[.79,.87]} & 0.84 {\scriptsize[.80,.88]} & 0.39 & 0.080 \\
+& \ao, best (L27, q0) & 0.54 {\scriptsize[.44,.65]} & 0.67 {\scriptsize[.59,.75]} & 0.74 {\scriptsize[.70,.79]} & 0.76 {\scriptsize[.72,.79]} & -- & -- \\
+& \ao (L18, q0) & 0.50 {\scriptsize[.39,.61]} & 0.63 {\scriptsize[.56,.70]} & 0.71 {\scriptsize[.67,.76]} & 0.75 {\scriptsize[.72,.78]} & -- & -- \\
+\midrule
+\multirow{2}{*}{\rotatebox{90}{\scriptsize Trained}}
+& \direct reader (QA) & {\bf 0.79}{\scriptsize$\pm$.01} & 0.81{\scriptsize$\pm$.01} & 0.82{\scriptsize$\pm$.01} & 0.82{\scriptsize$\pm$.01} & 0.40 & 0.105 \\
+& \forecast reader (timing head) & 0.78{\scriptsize$\pm$.02} & 0.81{\scriptsize$\pm$.01} & 0.81{\scriptsize$\pm$.01} & 0.82{\scriptsize$\pm$.01} & 0.37 & 0.108 \\
+\bottomrule
+\end{tabular}}
+\end{table}

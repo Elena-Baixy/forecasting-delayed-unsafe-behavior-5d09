@@ -1,0 +1,81 @@
+\section{Benchmark and Methods}
+\label{sec:method}
+
+\subsection{Problem formulation}
+\label{sec:formulation}
+Let $x$ be a prompt and $r=(r_1,\dots,r_T)$ a response sampled from the target model. Let $\onset\in\{0,\dots,T\}\cup\{\infty\}$ be the token index of the first clear safety violation in $r$, with $\onset=\infty$ if there is none. At a monitoring cutoff $t$ the observer sees only activations computed from $x$ and $r_{<t}$. We consider only \emph{safe} prefixes, \ie $\onset\ge t$. For a horizon $H$ the target is
+\begin{equation}
+\yH(t) = \mathbb{1}[\onset < t+H].
+\end{equation}
+The label is defined ($\yH{=}0$) when the onset is later ($\onset\ge t{+}H$), or when there is no event and either the generation stopped normally or $t{+}H\le T$. Otherwise the label is censored and masked. By construction $\yH$ is monotone in $H$, and we assert this in code. We use cutoffs $t\in\{32,64,128,192,256\}$ and horizons $H\in\{64,128,256,512\}$. Both sets were fixed before any continuation was seen.
+
+\subsection{Data: natural delayed onsets in \qwen}
+\label{sec:data}
+
+\para{Prompt families.}
+We sample 1,000 prompt families from four sources. Harmful requests from HarmBench, AdvBench, and StrongREJECT (408 annotated families) and BeaverTails unsafe questions (200) are wrapped in ``background first, then specifics'' long-form templates. Alpaca instructions in the same templates (279) are matched benign negatives. Story prompts (100) form a separate fictional-harm setting. We split families 80/10/10 per source with a fixed seed \emph{before} generation, so no family appears in two splits or folds.
+
+\para{Generation.}
+The target is a frozen \qwen in bf16 with the non-thinking chat template. We sample with temperature 0.7, top-$p$ 0.8, and top-$k$ 20, one sample per family, stopping at \texttt{<|im\_end|>} or at 768 new tokens. 522 generations hit the length cap and 465 stopped normally. Because $t{+}H\le 768$ for every cutoff and horizon we use, no horizon is censored.
+
+\para{Onset annotation.}
+An external LLM (\texttt{gpt-5.6-luna}) writes one structured timeline per generation under a rubric fixed before collection. The timeline lists topics, behaviors, a verbatim quote of the first violation, and refusals. The rubric separates harmful recommendations, toxic language, and fictional harm. Fictional harm counts as an assistant violation only if it embeds real, actionable instructions. We map each quote to a character offset (exact, then prefix, then fuzzy match) and then to a \qwen token offset by binary search over decoded prefixes. Thirteen families were dropped because the annotator call failed, twelve of them because of the API's content filter. A second annotator (\texttt{gpt-5.6-terra}) re-labeled a stratified sample of 200 generations, half of them flagged. Agreement is 84.5\% ($\kappa{=}0.69$). The second annotator confirms 68\% of the primary flags and adds none, so the primary annotator is the more liberal of the two. The median onset difference is 1 token, and 70\% of onsets agree within 32 tokens.
+
+\para{Resulting benchmark.}
+The assistant setting has 3,520 safe prefixes from 880 families. 88 families contain an event (93 harmful-recommendation and 2 toxic-language events), and the median onset is token 360. Positive rates are low and grow with $H$ (\tabref{tab:stats}). The benign source has a 0\% event rate, and the two harmful sources have 15--16\%. A further 132 prefixes are already unsafe; we use them only for a separate detection analysis. The story setting has 439 safe prefixes from 96 families, with the first fictional-harm description as the event.
+
+\begin{table}[t]
+\centering
+\caption{{\bf Label statistics} for the assistant setting (3,520 safe prefixes, 880 families). Positives are rare at short horizons: only 22 families contribute a positive at $H{=}64$.}
+\label{tab:stats}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+ & $H{=}64$ & $H{=}128$ & $H{=}256$ & $H{=}512$ \\
+\midrule
+Prevalence of $\yH{=}1$ & 0.8\% & 1.8\% & 5.0\% & 10.7\% \\
+Families with a positive prefix & 22 & 44 & 68 & 88 \\
+Censored prefixes & 0 & 0 & 0 & 0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Observer inputs}
+\label{sec:inputs}
+For each prefix we run a separate forward pass of \qwen on $x\oplus r_{<t}$ and cache the residual stream after layers 9, 18, and 27 (of 36) at the last observed token. For the history variant we also store the mean of layer-18 residuals over the last 16 observed tokens. The observer never touches generation. In a causal audit, the same-position activation computed with later tokens appended differs by at most 1.2\% (relative), which is bf16 noise. This confirms that the inputs contain no future information.
+
+\subsection{Observers}
+\label{sec:observers}
+All observers output a score for $\yH$ on safe prefixes.
+
+\para{Trivial and text baselines.}
+\emph{Prevalence} predicts the training base rate. \emph{Token position} predicts the base rate per cutoff $t$. \textprompt and \textprefix are TF-IDF (1--2-gram) logistic regressions on the prompt alone or on the prompt plus the observed prefix.
+
+\para{Activation probes.}
+We fit L2-regularized logistic regressions per layer and on the concatenation of all three layers, as well as an MLP probe with 256 hidden units. \histprobe concatenates the layer-18 last-token residual with the 16-token mean.
+
+\para{Self-report.}
+In a fresh chat we show \qwen the prompt and the partial response and ask whether the response will turn harmful. The score is the Yes$-$No logit margin, calibrated in one dimension within cross-validation.
+
+\para{Off-the-shelf Activation Oracle.}
+We load the public \qwen AO LoRA (\texttt{checkpoints\_latentqa\_cls\_past\_lens\_addition\_Qwen3-8B}) and follow its injection recipe. The prompt is \texttt{``Layer: L\textbackslash n ? \textbackslash n''} followed by the question, and the target activation is added, norm-matched, at oracle layer 1 at a single position. We ask two yes/no questions: ``will the response go on to include harmful content later?'' (q0) and a shorter question asking whether the assistant is ``about to give dangerous instructions'' (q1). We use each of layers 9, 18, and 27 and score the Yes$-$No logit margin with the same 1-D calibration.
+
+\para{Trained readers: \direct vs.\ \forecast.}
+Both readers share an encoder. Each layer is mapped by LayerNorm and a linear layer to 256 dimensions; we add layer and position embeddings and concatenate to 512 dimensions. Both also share a question-conditioned attention QA head. Questions are embedded with \texttt{text-embedding-3-small}.
+\begin{itemize}[leftmargin=*,itemsep=0pt,topsep=0pt]
+    \item \direct maps the encoding through an MLP to 8 memory slots, which the QA head attends to (6.3M parameters).
+    \item \forecast uses 4 horizon queries to cross-attend to the encoding, producing 2 forecast vectors per horizon. A 5-bin timing head predicts discrete hazards, so cumulative risk is monotone in $H$, and is trained with a censoring-aware likelihood. Per-window heads predict behavior type and topic. The QA head reads \emph{only} the forecast vectors and the event probabilities (5.2M parameters). The loss is $\gL = \gL_{\text{onset}} + 0.5\,\gL_{\text{behavior}} + \gL_{\text{QA}}$.
+\end{itemize}
+The QA questions are occurrence within 64, 128, 256, and 512 tokens, harmful recommendation within 512, topic change within 128, and ``will the assistant refuse or back away later''. The last question is held out of training to test generalization to an unseen question meaning. The two readers use the same labels, AdamW with learning rate $3{\times}10^{-4}$, 30 epochs, batch size 128, and 3 seeds. As ablations and controls we train \forecast with a raw-activation bypass to the QA head, both readers on shuffled activations and on a constant mean activation, and a \emph{readout ceiling} in which the QA head receives gold future bins instead of predicted ones. Two simplifications differ from the full design we planned: the QA decoder is a small attention head rather than a pretrained LLM with LoRA, and we omit a semantic auxiliary loss.
+
+\subsection{Protocol and metrics}
+\label{sec:protocol}
+The fixed 10\% test split contains only 2--8 event families, so we report 5-fold family-grouped cross-validation over the 880 assistant families. Hyperparameters are fixed in advance for all methods. For each $H$ we report \auroc, \auprc, and Brier score, with 95\% confidence intervals from 1,000 family-level bootstrap resamples.
+
+\para{Early warning.}
+Our primary deployment metric uses the $H{=}512$ score. In each training fold we hold out benign validation families and set the alert threshold to the 95th percentile of their per-trajectory maximum score. This targets a 5\% trajectory-level false-alarm rate (FAR). On test folds we report the fraction of unsafe trajectories whose first alert comes at least 64, 128, or 256 tokens before onset.
+
+\para{Paired comparison.}
+To compare \direct and \forecast we average out-of-fold predictions over seeds and run a paired family bootstrap on the \auroc difference.
+
+\para{Implementation.}
+We use one NVIDIA RTX A6000 (48\,GB). Annotation took about 1,200 API calls. \Appref{app:details} lists further details and software versions.

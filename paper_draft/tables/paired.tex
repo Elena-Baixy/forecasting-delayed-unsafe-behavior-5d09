@@ -1,0 +1,16 @@
+\begin{table}[t]
+\centering
+\caption{{\bf \forecast vs.\ matched \direct reader.} \auroc of seed-averaged out-of-fold predictions; $\Delta$ is the paired family-bootstrap difference with 95\% CI and two-sided $p$. Negative values favor \direct. Seed averaging (ensembling) gives higher \auroc than single seeds in \tabref{tab:main}.}
+\label{tab:paired}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}ccccll@{}}
+\toprule
+$H$ & \direct QA & \forecast head & \forecast QA & $\Delta$(head $-$ \direct) [CI], $p$ & $\Delta$(\forecast QA $-$ \direct) [CI], $p$ \\
+\midrule
+64  & {\bf 0.819} & 0.779 & 0.806 & $-0.040$ [$-0.093$, $0.005$], 0.10 & $-0.013$ [$-0.076$, $0.037$], 0.70 \\
+128 & {\bf 0.844} & 0.826 & 0.811 & $-0.018$ [$-0.053$, $0.014$], 0.29 & $-0.034$ [$-0.081$, $0.010$], 0.13 \\
+256 & {\bf 0.859} & 0.826 & 0.822 & $-0.033$ [$-0.056$, $-0.013$], 0.002 & $-0.038$ [$-0.062$, $-0.014$], $<$0.001 \\
+512 & {\bf 0.851} & 0.833 & 0.821 & $-0.018$ [$-0.034$, $-0.003$], 0.014 & $-0.031$ [$-0.053$, $-0.011$], $<$0.001 \\
+\bottomrule
+\end{tabular}}
+\end{table}

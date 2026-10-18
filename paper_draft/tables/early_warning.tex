@@ -1,0 +1,22 @@
+\begin{table}[t]
+\centering
+\caption{{\bf Early warning at a target 5\% benign false-alarm rate.} We score with the $H{=}512$ output and set the threshold on benign validation families inside each training fold. Columns give the fraction of unsafe test trajectories whose first alert comes at least $k$ tokens before onset, and the realized test FAR. 88 unsafe and 792 benign trajectories (\ao: 78 and 670, from its own validation carve-out). Trained readers average 3 seeds. Best in {\bf bold}.}
+\label{tab:ew}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textsc{Method} & $\ge 64$ & $\ge 128$ & $\ge 256$ & Test FAR \\
+\midrule
+Prevalence / token position & 0.00 & 0.00 & 0.00 & 0.00 \\
+\textprompt & 0.17 & 0.17 & 0.12 & 0.06 \\
+\textprefix & 0.42 & 0.42 & 0.34 & 0.05 \\
+Linear probe L9+18+27 & 0.42 & 0.42 & 0.31 & 0.04 \\
+MLP probe L9+18+27 & 0.39 & 0.39 & 0.24 & 0.03 \\
+\histprobe & {\bf 0.57} & {\bf 0.56} & {\bf 0.43} & 0.06 \\
+\selfreport & 0.39 & 0.38 & 0.30 & 0.06 \\
+\ao (L27, q0; best \auroc) & 0.22 & 0.22 & 0.13 & 0.05 \\
+\ao (L18, q0; best alerts) & 0.36 & 0.36 & 0.27 & 0.06 \\
+\direct reader & 0.38 & 0.37 & 0.22 & 0.04 \\
+\forecast reader & 0.37 & 0.36 & 0.20 & 0.04 \\
+\bottomrule
+\end{tabular}
+\end{table}

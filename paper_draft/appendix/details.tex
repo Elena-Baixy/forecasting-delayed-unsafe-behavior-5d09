@@ -1,0 +1,40 @@
+\section{Additional Experimental Details}
+\label{app:details}
+
+\para{Data sources and splits.}
+\Tabref{tab:sources} lists the prompt sources. Families were split 80/10/10 per source with a fixed seed before generation. Each family appears in exactly one split and one cross-validation fold, and we assert this in code.
+
+\begin{table}[h]
+\centering
+\caption{Prompt families after annotation (987 of 1,000; 13 annotator calls failed).}
+\label{tab:sources}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lccl@{}}
+\toprule
+\textsc{Source} & Families & Event rate & Role \\
+\midrule
+Harmful long-form (HarmBench / AdvBench / StrongREJECT) & 408 & 15.9\% & assistant \\
+Gray long-form (BeaverTails unsafe questions) & 200 & 15.0\% & assistant \\
+Benign long-form (Alpaca) & 279 & 0\% & assistant (matched negatives) \\
+Story prompts & 100 & 72\% (fictional harm) & reported separately \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\para{Onset distribution.}
+Among the 88 assistant event families, onset quantiles are 79 (10\%), 273 (25\%), 360 (50\%), 483 (75\%), and 557 (90\%) response tokens.
+
+\para{Annotation check.}
+The second annotator (\texttt{gpt-5.6-terra}) re-labeled 200 generations stratified so that half were flagged by the primary annotator. Event agreement was 84.5\% ($\kappa{=}0.69$), and fiction-label agreement was 99\%. The second annotator confirmed 68\% of primary flags and flagged nothing the primary annotator missed. The median onset difference was 1 token, and 70\% of onsets agreed within 32 tokens.
+
+\para{Calibration of verbal scores.}
+For \selfreport and the \ao we use the Yes$-$No logit margin of the next token as a score. We fit a 1-D logistic calibration inside each training fold. Calibration does not change \auroc within a fold but makes pooled out-of-fold scores comparable across folds.
+
+\para{Trained readers.}
+Both readers use AdamW (learning rate $3{\times}10^{-4}$), 30 epochs, batch size 128, positive weight 3 on QA losses, and seeds 0--2. The \forecast timing head has five bins (onset within 64, 128, 256, 512 tokens, or later/never) and predicts discrete hazards. Censored horizons would be masked in the likelihood, although none occur in our data.
+
+\para{Replication across software versions.}
+Generation used torch 2.7.1. Extraction, the main E2 run, and the AO evaluation used torch 2.14.1 and transformers 5.20, because upgrading peft to load the AO pulled in a newer torch. An earlier E2 run of the same code under torch 2.7.1 gave the same ordering: \direct 0.817$\pm$0.004 vs.\ \forecast head 0.814$\pm$0.003 \auroc at $H{=}512$, and 37\% vs.\ 33\% of unsafe trajectories alerted at least 128 tokens ahead.
+
+\para{Compute and cost.}
+All model computation ran on one NVIDIA RTX A6000 (48\,GB). Annotation used about 1,200 API calls and question embedding 7 calls, at a total cost of a few US dollars.

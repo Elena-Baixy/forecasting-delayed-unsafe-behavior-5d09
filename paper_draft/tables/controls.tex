@@ -1,0 +1,24 @@
+\begin{table}[t]
+\centering
+\caption{{\bf Ablations, controls, and question generalization} (QA \auroc; single seed for ablations/controls, mean$\pm$sd over 3 seeds for the main readers). ``Refuse later'' is never trained. The gold-readout row feeds true future bins to the \forecast QA head and is an upper bound on readout, not a forecaster.}
+\label{tab:controls}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+& \multicolumn{4}{c}{Occurrence within $H$} & \multicolumn{2}{c}{Other trained questions} & Held-out \\
+\cmidrule(lr){2-5} \cmidrule(lr){6-7} \cmidrule(lr){8-8}
+\textsc{Model} & 64 & 128 & 256 & 512 & Harm.\ rec.\ 512 & Topic chg.\ 128 & Refuse later \\
+\midrule
+\direct & {\bf 0.79}{\scriptsize$\pm$.01} & {\bf 0.81}{\scriptsize$\pm$.01} & {\bf 0.82}{\scriptsize$\pm$.01} & {\bf 0.82}{\scriptsize$\pm$.01} & {\bf 0.82}{\scriptsize$\pm$.01} & {\bf 0.70}{\scriptsize$\pm$.00} & {\bf 0.63}{\scriptsize$\pm$.01} \\
+\forecast & 0.78{\scriptsize$\pm$.02} & 0.79{\scriptsize$\pm$.01} & 0.80{\scriptsize$\pm$.01} & 0.79{\scriptsize$\pm$.00} & 0.79{\scriptsize$\pm$.01} & 0.67{\scriptsize$\pm$.00} & 0.57{\scriptsize$\pm$.02} \\
+\forecast + raw-activation bypass & 0.75 & 0.78 & 0.80 & 0.80 & 0.80 & 0.69 & 0.59 \\
+\midrule
+\direct, shuffled activations & 0.31 & 0.47 & 0.47 & 0.48 & 0.48 & 0.57 & 0.49 \\
+\forecast, shuffled activations & 0.43 & 0.52 & 0.51 & 0.48 & 0.49 & 0.58 & 0.49 \\
+\direct, constant activation & 0.38 & 0.57 & 0.60 & 0.54 & 0.56 & 0.65 & 0.49 \\
+\forecast, constant activation & 0.38 & 0.57 & 0.60 & 0.54 & 0.56 & 0.65 & 0.48 \\
+\midrule
+\forecast, gold future bins (ceiling) & 0.75 & 0.78 & 0.84 & 0.96 & 0.97 & 0.67 & 0.58 \\
+\bottomrule
+\end{tabular}}
+\end{table}

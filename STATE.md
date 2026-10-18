@@ -1,17 +1,17 @@
 # Research State
 
 - Current phase: `None`
-- Pipeline completed: `False`
+- Pipeline completed: `True`
 
 ## Previous phases
 
-resource_finder (succeeded), experiment_runner (failed)
+resource_finder (succeeded), experiment_runner (succeeded)
 
 ## Current phase context
 
 - Phase: `experiment_runner`
-- Status: `failed`
-- Started: `2026-10-18T21:00:34.648323Z`
+- Status: `completed`
+- Started: `2026-10-18T22:49:31.744709Z`
 - Next steps:
   - Validate the report and experimental artifacts before finalizing.
 
@@ -22,9 +22,9 @@ resource_finder (succeeded), experiment_runner (failed)
 
 ## Output validation
 
-- Valid: `False`
+- Valid: `True`
 - Expected: `REPORT.md`
-- Missing: `REPORT.md`
+- Missing: None
 - Outside workspace: None
 
 ## Agent notes
@@ -71,21 +71,25 @@ resource_finder (succeeded), experiment_runner (failed)
 
 ### experiment_runner
 <!-- NEURICO_AGENT_NOTES_START:experiment_runner -->
-**Phase:** experiment_runner. All phases attempted (2026-10-18, ~1 h budget).
-**Done:**
-- 1000 prompt families, split 80/10/10 before generation (`results/families.json`).
-- Fresh Qwen3-8B generations (T=0.7, top_p=0.8, top_k=20, max 768, non-thinking): `results/generations.jsonl`.
-- gpt-5.6-luna timelines (`results/annotations.jsonl`); 12 were blocked by the OpenAI bio filter and excluded.
-- Activations at layers 9/18/27, cutoffs {32, 64, 128, 192, 256} (`results/acts*.npy`). Causal audit: `results/causal_audit.json`.
-- Labels: `results/prefix_labels.csv`. Split and monotonicity audits pass; 0 censored horizons.
-- Annotation cross-check (gpt-5.6-terra, n=200): kappa 0.69 (`results/annotation_check.json`).
-- E1 baselines: `results/results_e1.json`. E2 runs: `results/results_e2*.json`. Figures and tables in `figures/` and `results/tables.md`. Write-up in REPORT.md.
-**Key decisions / deviations:**
-- Part 2 is a lightweight analog: small matched heads on cached activations, not an LLM decoder with LoRA.
-- Off-the-shelf AO/LatentQA, the repeated-rollout calibration, Track A and RQ4/RQ6 were not run (time).
-- No human check; it was replaced by a second-LLM check.
-- transformers was upgraded 4.55 → 5.20 by the sentence-transformers install after generation. Extraction ran on 5.20.
-**Next:** see REPORT.md "Next steps". Scale positives (more samples per harmful family), run AO zero-shot, add repeated-rollout calibration.
+**Phase:** experiment_runner. COMPLETE (2026-10-18). Two sessions.
+**Session 1:** families/split, generation, annotation, activations, audits, labels, E1 baselines, E2 (3 seeds), controls. Left without REPORT/figures.
+**Session 2:**
+- Added off-the-shelf AO zero-shot (`src/ao_zeroshot.py` → `results/ao_scores.npy`).
+- Reran E2 main pair, saving OOF preds (`results/results_e2_preds.json`, `preds_*.npz`; replicates session-1 ordering).
+- Added gold-readout ceiling (`results/results_e2_gold.json`).
+- Paired family bootstrap and data stats (`src/analysis.py` → `results/analysis.json`).
+- Figures (`figures/`), tables (`results/tables.md`), REPORT.md, README.md.
+**Key findings:**
+- History probe AUROC 0.79 (H=64) → 0.90 (H=512); 56% early alerts ≥128 tokens at 5% FAR.
+- Off-the-shelf AO 0.54 → 0.76, biased to "No".
+- Forecast architecture ≤ matched direct reader (Δ −0.02 to −0.04, significant at H ≥ 256). Supervision, not architecture.
+- Audits pass; 0 censored horizons.
+**Deviations / unresolved:**
+- No human annotation check (LLM–LLM κ = 0.69).
+- No repeated-rollout calibration, Track A, RQ4 or RQ6.
+- Part 2 uses small attention QA heads, not an LLM decoder.
+- peft upgrade pulled torch 2.14 (cu130) into `.venv`.
+**Next:** see REPORT.md §7.
 <!-- NEURICO_AGENT_NOTES_END:experiment_runner -->
 
 <!-- NEURICO_AGENT_NOTES_END -->

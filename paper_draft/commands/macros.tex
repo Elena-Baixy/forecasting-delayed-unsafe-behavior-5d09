@@ -1,0 +1,44 @@
+%%%%% PROJECT-SPECIFIC MACROS %%%%%
+% Import with: \input{commands/macros}
+
+\usepackage{xspace}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% METHOD NAMES
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newcommand{\forecast}{\textsc{Forecast}\xspace}          % forecast-representation reader
+\newcommand{\direct}{\textsc{Direct}\xspace}              % direct AO-style reader
+\newcommand{\histprobe}{\textsc{Probe+Hist}\xspace}       % linear probe + 16-token history
+\newcommand{\ao}{\textsc{AO}\xspace}                      % off-the-shelf Activation Oracle
+\newcommand{\selfreport}{\textsc{Self-Report}\xspace}
+\newcommand{\textprefix}{\textsc{Text(P+X)}\xspace}
+\newcommand{\textprompt}{\textsc{Text(P)}\xspace}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% MODEL NAMES
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newcommand{\qwen}{\textsc{Qwen3-8B}\xspace}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% ABBREVIATIONS
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newcommand{\ie}{i.e.,\xspace}
+\newcommand{\eg}{e.g.,\xspace}
+\newcommand{\cf}{cf.\xspace}
+\newcommand{\wrt}{w.r.t.\xspace}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% DOMAIN-SPECIFIC TERMS
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newcommand{\onset}{\tau}             % first-violation token index
+\newcommand{\yH}{y_{H}}               % within-horizon label
+\newcommand{\auroc}{AUROC\xspace}
+\newcommand{\auprc}{AUPRC\xspace}
+
+% Appendix reference
+\providecommand{\appref}[1]{appendix~\ref{#1}}
+\providecommand{\Appref}[1]{Appendix~\ref{#1}}

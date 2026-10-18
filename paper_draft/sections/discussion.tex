@@ -1,0 +1,28 @@
+\section{Discussion}
+\label{sec:discussion}
+
+\para{What do the activations know about a coming violation?}
+Our results suggest two kinds of signal. The first is request-level: which request this is and whether \qwen has started to comply. This signal dominates at long horizons, and text sees much of it (prompt-only \auroc 0.77 and prompt+prefix 0.85 at $H{=}512$). The second is local and concerns \emph{when} the response turns. It matters most at short horizons, where text fails (0.63 at $H{=}64$) and activations, especially averaged over a short history, do much better (0.79). The story setting shows the same split: the prompt decides whether a violent scene happens, while activations help predict when it starts. This fits the ``breadcrumbs'' view of \citet{wu2024planahead}: the model carries features that are useful for the current text and also predict the future, rather than an explicit plan with a timestamp.
+
+\para{Why do zero-shot verbalizers fail here?}
+The off-the-shelf \ao answers ``No'' to about 99\% of prefixes on the main question. Its calibrated margin is near chance for imminent onsets. This matches the ``safe'' prior that both \citet{bauer2026building} and our own LatentQA smoke test observed. The \ao was trained on current-state questions and on predicting the next few tokens, so a question about harm hundreds of tokens away is far outside its training distribution. Training on future-event labels fixes most of the gap: the AO-style \direct reader improves on the \ao by 0.25 \auroc at $H{=}64$ (0.79 vs.\ 0.54). Even so, the trained readers do not beat a linear probe with history.
+
+\para{Supervision, not architecture.}
+Our main hypothesis was that an explicit future representation (horizon queries, forecast vectors, and a timing head) would help beyond a direct reader trained on the same labels. The data do not support it. \forecast ties \direct at $H\le128$ and loses slightly at $H\ge256$. It also generalizes worse to the held-out question meaning. The readout-ceiling diagnostic locates the problem: the QA head can use a correct forecast (0.96 at $H{=}512$), but the predicted forecast is not better than what an unconstrained reader learns. With only 88 positive families, a 5-bin hazard bottleneck is probably data-starved. The bottleneck could still help with many more positive families, with a semantic auxiliary loss, or with an LLM decoder that benefits from a compact structured input. We did not test these settings.
+
+\para{Practical implications.}
+For early warning of delayed harm, a linear probe on a short activation history, together with the prompt, is the baseline to beat. It is cheap and it outperformed every verbalizer and trained reader we tested. Zero-shot verbalizers asked yes/no safety questions should not be trusted as forecasters without calibration and a probe comparison. Because most missed trajectories are never alerted at all, improving recall at a fixed FAR matters more than improving lead time.
+
+\para{Limitations.}
+\begin{itemize}[leftmargin=*,itemsep=0pt,topsep=0pt]
+    \item \textbf{Few events.} There are 88 assistant event families and only 22 at $H{=}64$, so CIs are wide. The fixed test split has 2--8 positive families, so we report 5-fold family CV with hyperparameters fixed in advance.
+    \item \textbf{LLM labels without a human check.} Inter-annotator $\kappa$ is 0.69, the primary annotator is more liberal than the second one, and onsets agree within 32 tokens only 70\% of the time. This mostly blurs the $H{=}64$ labels.
+    \item \textbf{Single rollouts.} Each family has one sample from a stochastic policy, so labels are single realizations. We did not run repeated-rollout calibration of the label noise.
+    \item \textbf{Lightweight readers.} Our \direct and \forecast readers are small attention heads on cached activations, not pretrained LLM decoders with LoRA, and they omit the semantic auxiliary loss. Our conclusions about architecture hold for this reader family only.
+    \item \textbf{Limited verbalizer coverage.} We test one AO checkpoint with a single injected position, two questions, and yes/no scoring. Multi-position or open-ended querying may do better. We did not evaluate LatentQA or other decoders on \qwen activations because no compatible checkpoint exists.
+    \item \textbf{Scope.} We study one target model in non-thinking mode with natural onsets. We did not build model organisms with controlled delays, so we cannot separate plan-like signals from position effects in harmful trajectories.
+    \item \textbf{Software drift.} The analysis environment changed between generation and analysis (\appref{app:details}). Generation was unaffected, and the \direct-vs-\forecast ordering replicated across versions.
+\end{itemize}
+
+\para{Broader impact.}
+Forecasting monitors could stop harmful content before it is emitted, which is the main motivation for this work. The same forecasts could also be used adversarially, for example to search for prompts that delay harm past a monitor's horizon. We release no new harmful content. Our generations and annotations contain harmful text from the target model and should be shared only under access controls.
